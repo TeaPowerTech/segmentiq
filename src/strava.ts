@@ -1,4 +1,6 @@
-import type { StravaStreamSet, StravaEffortSummary } from './types'
+import JSONBig from 'json-bigint'
+
+const JSONBigString = JSONBig({ storeAsString: true })
 
 const STRAVA_BASE = 'https://www.strava.com/api/v3'
 const STREAM_KEYS = 'latlng,distance,altitude,velocity_smooth,heartrate,watts,cadence'
@@ -75,7 +77,6 @@ async function getValidAccessToken(athleteId: number): Promise<string> {
     return record.accessToken
   }
 
-  // Refresh the token
   const response = await fetch('https://www.strava.com/oauth/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -92,7 +93,8 @@ async function getValidAccessToken(athleteId: number): Promise<string> {
     throw new StravaAuthError('Token refresh failed — please reconnect Strava')
   }
 
-  const data = await response.json() as {
+  const text = await response.text()
+  const data = JSONBigString.parse(text) as {
     access_token: string
     refresh_token: string
     expires_at: number
@@ -143,14 +145,15 @@ async function stravaRequest<T>(athleteId: number, url: string): Promise<T> {
     throw new Error(`Strava API error ${response.status}: ${body}`)
   }
 
-  return response.json() as Promise<T>
+  const text = await response.text()
+  return JSONBigString.parse(text) as T
 }
 
 export async function fetchEffort(
   athleteId: number,
   effortId: number
-): Promise<StravaEffortSummary> {
-  return stravaRequest<StravaEffortSummary>(
+): Promise<any> {
+  return stravaRequest<any>(
     athleteId,
     `${STRAVA_BASE}/segment_efforts/${effortId}`
   )
@@ -161,13 +164,13 @@ export async function fetchEffortStreams(
   activityId: number,
   startIndex: number,
   endIndex: number
-): Promise<StravaStreamSet> {
+): Promise<any> {
   const url = `${STRAVA_BASE}/activities/${activityId}/streams?` +
     `keys=${STREAM_KEYS}&key_by_type=true&resolution=high&series_type=distance`
 
   const raw = await stravaRequest<Record<string, any>>(athleteId, url)
 
-  const sliced: StravaStreamSet = {}
+  const sliced: any = {}
 
   if (raw.latlng) {
     sliced.latlng = {
@@ -180,7 +183,7 @@ export async function fetchEffortStreams(
   const numericKeys = [
     'distance', 'altitude', 'velocity_smooth',
     'heartrate', 'watts', 'cadence'
-  ] as const
+  ]
 
   for (const key of numericKeys) {
     if (raw[key]) {
@@ -199,10 +202,10 @@ export async function fetchSegmentEfforts(
   athleteId: number,
   segmentId: number,
   perPage = 50
-): Promise<StravaEffortSummary[]> {
-  const efforts = await stravaRequest<StravaEffortSummary[]>(
+): Promise<any[]> {
+  const efforts = await stravaRequest<any[]>(
     athleteId,
     `${STRAVA_BASE}/segment_efforts?segment_id=${segmentId}&per_page=${perPage}`
   )
-  return efforts.sort((a, b) => a.elapsed_time - b.elapsed_time)
+  return efforts.sort((a: any, b: any) => a.elapsed_time - b.elapsed_time)
 }
