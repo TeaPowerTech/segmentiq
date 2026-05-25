@@ -55,10 +55,10 @@ export function computeComparison(
   effortA: NormalisedEffort,
   effortB: NormalisedEffort
 ): {
-  heartRate: (number | null)[]
-  speedKph: number[]
-  powerWatts: (number | null)[]
-  totalTimeDeltaSeconds: number
+  heartRate: (number | null)[];
+  speedKph: number[];
+  powerWatts: (number | null)[];
+  totalTimeDeltaSeconds: number;
 } {
   if (
     effortA.points.length !== NORMALISED_POINT_COUNT ||
@@ -124,13 +124,124 @@ function validateStreams(streams: StravaStreamSet): void {
 }
 
 interface RawPoint {
-  distanceMetres: number
-  lat: number
-  lng: number
-  speedMs: number
-  altitudeMetres: number
-  heartRate: number | null
-  powerWatts: number | null
+  distanceMetres: number;
+  lat: number;
+  lng: number;
+  speedMs: number;
+  altitudeMetres: number;
+  heartRate: number | null;
+  powerWatts: number | null;
 }
 
-function buildRawPoint
+function buildRawPoints(streams: StravaStreamSet): RawPoint[] {
+  return Array.from({ length: streams.latlng!.data.length }, (_, i) => ({
+    distanceMetres: streams.distance!.data[i],
+    lat: streams.latlng!.data[i][0],
+    lng: streams.latlng!.data[i][1],
+    speedMs: streams.velocity_smooth!.data[i],
+    altitudeMetres: streams.altitude!.data[i],
+    heartRate: streams.heartrate?.data[i] ?? null,
+    powerWatts: streams.watts?.data[i] ?? null,
+  }))
+}
+
+function interpolateToFixedPoints(
+  rawPoints: RawPoint[],
+  targetCount: number
+): RawPoint[] {
+  const totalDistance = rawPoints[rawPoints.length - 1].distanceMetres
+  if (totalDistance <= 0)
+    throw new NormaliseError('total distance must be greater than 0')
+
+  const result: RawPoint[] = []
+
+  for (let i = 0; i < targetCount; i++) {
+    const targetDist = (i / (targetCount - 1)) * totalDistance
+    const { lower, upper, t } = findBracket(rawPoints, targetDist)
+    result.push({
+      distanceMetres: targetDist,
+      lat: lerp(lower.lat, upper.lat, t),
+      lng: lerp(lower.lng, upper.lng, t),
+      speedMs: lerp(lower.speedMs, upper.speedMs, t),
+      altitudeMetres: lerp(lower.altitudeMetres, upper.altitudeMetres, t),
+      heartRate: lerpNullable(lower.heartRate, upper.heartRate, t),
+      powerWatts: lerpNullable(lower.powerWatts, upper.powerWatts, t),
+    })
+  }
+
+  return result
+}
+
+interface Bracket {
+  lower: RawPoint;
+  upper: RawPoint;
+  t: number;
+}
+
+function findBracket(points: RawPoint[], targetDist: number): Bracket {
+  if (targetDist <= points[0].distanceMetres)
+    return { lower: points[0], upper: points[0], t: 0 }
+  if (targetDist >= points[points.length - 1].distanceMetres) {
+    const last = points[points.length - 1]
+    return { lower: last, upper: last, t: 0 }
+  }
+
+  let lo = 0
+  let hi = points.length - 1
+
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >>> 1
+    if (points[mid].distanceMetres <= targetDist) lo = mid
+    else hi = mid
+  }
+
+  const lower = points[lo]
+  const upper = points[hi]
+  const span = upper.distanceMetres - lower.distanceMetres
+  const t = span === 0 ? 0 : (targetDist - lower.distanceMetres) / span
+
+  return { lower, upper, t }
+}
+
+function computeDerivedFields(
+  points: RawPoint[],
+  athleteWeightKg: number | null
+): EffortPoint[] {
+  const baseAltitude = points[0].altitudeMetres
+
+  return points.map((p, i) => {
+    const distancePct = i / (NORMALISED_POINT_COUNT - 1)
+    const elevationGainMetres = Math.max(0, p.altitudeMetres - baseAltitude)
+    const speedKph = p.speedMs * 3.6
+    const wPerKg =
+      p.powerWatts != null && athleteWeightKg != null && athleteWeightKg > 0
+        ? p.powerWatts / athleteWeightKg
+        : null
+
+    return {
+      distancePct,
+      distanceMetres: p.distanceMetres,
+      lat: p.lat,
+      lng: p.lng,
+      heartRate: p.heartRate != null ? Math.round(p.heartRate) : null,
+      speedKph: Math.round(speedKph * 10) / 10,
+      powerWatts: p.powerWatts != null ? Math.round(p.powerWatts) : null,
+      wPerKg: wPerKg != null ? Math.round(wPerKg * 100) / 100 : null,
+      elevationGainMetres: Math.round(elevationGainMetres * 10) / 10,
+      elevationMetres: Math.round(p.altitudeMetres * 10) / 10,
+    }
+  })
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t
+}
+
+function lerpNullable(
+  a: number | null,
+  b: number | null,
+  t: number
+): number | null {
+  if (a == null || b == null) return null
+  return lerp(a, b, t)
+}
