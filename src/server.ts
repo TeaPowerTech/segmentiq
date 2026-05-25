@@ -50,20 +50,26 @@ app.get('/health', (_req: Request, res: Response) => {
 })
 
 // ─── GET /api/segments/:segmentId/efforts ─────────────────────────────────────
-// Lists all efforts for an athlete on a given segment
 
 app.get('/api/segments/:segmentId/efforts', requireSession, async (req: any, res: Response) => {
   try {
     const segmentId = parseInt(req.params.segmentId, 10)
     const efforts = await fetchSegmentEfforts(req.athleteId, segmentId)
-    return res.json({ data: efforts })
+
+    // Convert large IDs to strings to avoid JavaScript precision loss
+    const safe = efforts.map((e: any) => ({
+      ...e,
+      id: String(e.id),
+      activity: { ...e.activity, id: String(e.activity.id) },
+    }))
+
+    return res.json({ data: safe })
   } catch (err) {
     return handleError(err, res)
   }
 })
 
 // ─── GET /api/efforts/:effortId ───────────────────────────────────────────────
-// Returns a single normalised effort for replay animation
 
 app.get('/api/efforts/:effortId', requireSession, async (req: any, res: Response) => {
   const effortId = req.params.effortId
@@ -101,7 +107,6 @@ app.get('/api/efforts/:effortId', requireSession, async (req: any, res: Response
 })
 
 // ─── GET /api/efforts/compare?a=:idA&b=:idB ──────────────────────────────────
-// Returns two efforts and their comparison deltas
 
 app.get('/api/efforts/compare', requireSession, async (req: any, res: Response) => {
   const { a: effortIdA, b: effortIdB } = req.query
