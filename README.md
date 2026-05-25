@@ -1,2 +1,2 @@
 # segmentiq
-Strava Segment Comparison tool
+Strava Segment Comparison tool.
