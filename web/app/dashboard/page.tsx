@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 
 interface Effort {
@@ -11,22 +11,7 @@ interface Effort {
   average_watts?: number
   pr_rank: number | null
   device_watts: boolean
-}
-
-interface Segment {
-  id: number
-  name: string
-  distance: number
-  average_grade: number
-  total_elevation_gain: number
-  state: string
-  country: string
-}
-
-interface SegmentWithEfforts {
-  segment: Segment
-  efforts: Effort[]
-  bestEffort: Effort
+  segment: any
 }
 
 function formatTime(seconds: number): string {
@@ -67,54 +52,37 @@ export default function Dashboard() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const name = searchParams.get('name') ?? 'Athlete'
-
-  const [segments, setSegments] = useState<SegmentWithEfforts[]>([])
+  const [efforts, setEfforts] = useState<Effort[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // Hardcoded segment IDs for now — we'll make this dynamic later
   const SEGMENT_IDS = [37191008]
 
   useEffect(() => {
     async function loadSegments() {
       try {
-        const results: SegmentWithEfforts[] = []
-
+        const allEfforts: Effort[] = []
         for (const segmentId of SEGMENT_IDS) {
           const res = await fetch(`/api/segments/${segmentId}/efforts`)
-          if (res.status === 401) {
-            router.push('/')
-            return
-          }
+          if (res.status === 401) { router.push('/'); return }
           if (!res.ok) continue
-
           const json = await res.json()
-          const efforts: Effort[] = json.data
-
-          if (efforts.length === 0) continue
-
-          results.push({
-            segment: efforts[0].segment as any,
-            efforts,
-            bestEffort: efforts[0], // already sorted by elapsed_time asc
-          })
+          allEfforts.push(...json.data)
         }
-
-        setSegments(results)
+        setEfforts(allEfforts)
       } catch (err) {
         setError('Failed to load segments')
       } finally {
         setLoading(false)
       }
     }
-
     loadSegments()
   }, [])
 
+  const bestEffort = efforts[0]
+
   return (
     <main className="min-h-screen bg-background">
-
-      {/* Header */}
       <div className="border-b border-border px-4 py-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 bg-strava rounded-lg flex items-center justify-center">
@@ -128,19 +96,14 @@ export default function Dashboard() {
       </div>
 
       <div className="max-w-2xl mx-auto px-4 py-6">
-
-        {/* Page title */}
         <div className="mb-6">
           <h1 className="text-xl font-semibold">Your Segments</h1>
-          <p className="text-text-secondary text-sm mt-1">
-            Tap a segment to replay your efforts
-          </p>
+          <p className="text-text-secondary text-sm mt-1">Tap a segment to replay your efforts</p>
         </div>
 
-        {/* Loading */}
         {loading && (
           <div className="flex flex-col gap-3">
-            {[1, 2, 3].map(i => (
+            {[1,2,3].map(i => (
               <div key={i} className="bg-surface border border-border rounded-2xl p-4 animate-pulse">
                 <div className="h-4 bg-border rounded w-1/2 mb-3"/>
                 <div className="h-3 bg-border rounded w-1/3"/>
@@ -149,51 +112,63 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Error */}
         {error && (
           <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-4 text-red-400 text-sm">
             {error}
           </div>
         )}
 
-        {/* Segments list */}
-        {!loading && !error && segments.map(({ segment, efforts, bestEffort }) => (
+        {!loading && !error && bestEffort && (
           <div
-            key={segment.id}
             className="bg-surface border border-border rounded-2xl p-4 mb-3 cursor-pointer hover:border-strava transition-colors"
-            onClick={() => router.push(`/segment/${segment.id}`)}
+            onClick={() => router.push(`/segment/${bestEffort.segment.id}`)}
           >
-            {/* Segment header */}
             <div className="flex items-start justify-between mb-3">
               <div>
                 <div className="flex items-center gap-2 mb-1">
-                  <h2 className="font-medium text-sm">{segment.name}</h2>
+                  <h2 className="font-medium text-sm">{bestEffort.segment.name}</h2>
                   {bestEffort.pr_rank === 1 && <PrBadge rank={1} />}
                 </div>
                 <p className="text-text-muted text-xs">
-                  {formatDistance(segment.distance)}
-                  {segment.average_grade !== 0 && ` · ${segment.average_grade}% avg grade`}
-                  {segment.state && ` · ${segment.state}`}
+                  {formatDistance(bestEffort.segment.distance)}
+                  {bestEffort.segment.average_grade !== 0 && ` · ${bestEffort.segment.average_grade}% avg grade`}
+                  {bestEffort.segment.state && ` · ${bestEffort.segment.state}`}
                 </p>
               </div>
               <div className="text-right">
-                <div className="text-strava font-semibold text-sm">
-                  {formatTime(bestEffort.elapsed_time)}
-                </div>
+                <div className="text-strava font-semibold text-sm">{formatTime(bestEffort.elapsed_time)}</div>
                 <div className="text-text-muted text-xs">Best effort</div>
               </div>
             </div>
 
-            {/* Effort stats */}
             <div className="flex items-center gap-4 pt-3 border-t border-border">
               {bestEffort.average_heartrate && (
                 <div className="flex items-center gap-1.5">
                   <span className="text-red-400 text-xs">♥</span>
-                  <span className="text-text-secondary text-xs">
-                    {Math.round(bestEffort.average_heartrate)} bpm
-                  </span>
+                  <span className="text-text-secondary text-xs">{Math.round(bestEffort.average_heartrate)} bpm</span>
                 </div>
               )}
               {bestEffort.average_watts && bestEffort.device_watts && (
                 <div className="flex items-center gap-1.5">
-                  <span classN
+                  <span className="text-yellow-400 text-xs">⚡</span>
+                  <span className="text-text-secondary text-xs">{Math.round(bestEffort.average_watts)}W</span>
+                </div>
+              )}
+              <div className="flex items-center gap-1.5 ml-auto">
+                <span className="text-text-muted text-xs">{efforts.length} efforts</span>
+                <span className="text-text-muted text-xs">·</span>
+                <span className="text-text-muted text-xs">Last {formatDate(efforts[efforts.length - 1].start_date)}</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {!loading && !error && efforts.length === 0 && (
+          <div className="text-center py-16">
+            <p className="text-text-secondary text-sm">No segments found.</p>
+          </div>
+        )}
+      </div>
+    </main>
+  )
+}
