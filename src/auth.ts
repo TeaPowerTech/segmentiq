@@ -64,26 +64,15 @@ router.get('/auth/callback', async (req: Request, res: Response) => {
       scope: data.scope,
     })
 
-    const session = Buffer.from(JSON.stringify({
+    // Pass session as a URL token — Vercel will set its own cookie
+    const sessionToken = Buffer.from(JSON.stringify({
       athleteId: data.athlete.id,
       firstname: data.athlete.firstname,
       weightKg: data.athlete.weight ?? null,
     })).toString('base64')
 
-    // Parse the frontend domain for the cookie
-    const frontendHost = new URL(FRONTEND_URL).hostname
-
-    res.cookie('session', session, {
-      httpOnly: true,
-      secure: true,
-      sameSite: 'none',
-      domain: frontendHost,
-      maxAge: 30 * 24 * 60 * 60 * 1000,
-      path: '/',
-    })
-
     return res.redirect(
-      `${FRONTEND_URL}/dashboard?name=${encodeURIComponent(data.athlete.firstname)}`
+      `${FRONTEND_URL}/auth/complete?token=${sessionToken}&name=${encodeURIComponent(data.athlete.firstname)}`
     )
 
   } catch (err) {

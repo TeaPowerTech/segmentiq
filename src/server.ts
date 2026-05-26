@@ -18,14 +18,37 @@ const port = process.env.PORT || 3000
 app.use(express.json())
 app.use(cookieParser())
 
+// ─── CORS — allow Vercel frontend ─────────────────────────────────────────────
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin
+  const allowed = [
+    'https://segmentiq.vercel.app',
+    'http://localhost:3000',
+    'http://localhost:3001',
+  ]
+  if (origin && allowed.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin)
+    res.setHeader('Access-Control-Allow-Credentials', 'true')
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,x-session')
+  }
+  if (req.method === 'OPTIONS') return res.sendStatus(204)
+  next()
+})
+
 // ─── Auth routes ──────────────────────────────────────────────────────────────
 
 app.use('/api', authRouter)
 
 // ─── Session middleware ───────────────────────────────────────────────────────
+// Reads session from either cookie (legacy) or x-session header (cross-domain)
 
 function requireSession(req: any, res: Response, next: any) {
-  const session = req.cookies?.session
+  const sessionFromHeader = req.headers['x-session'] as string | undefined
+  const sessionFromCookie = req.cookies?.session
+  const session = sessionFromHeader || sessionFromCookie
+
   if (!session) {
     return res.status(401).json({ error: 'Not logged in', code: 'STRAVA_AUTH_EXPIRED' })
   }
@@ -56,7 +79,6 @@ app.get('/api/segments/:segmentId/efforts', requireSession, async (req: any, res
     const segmentId = parseInt(req.params.segmentId, 10)
     const efforts = await fetchSegmentEfforts(req.athleteId, segmentId)
 
-    // Convert large IDs to strings to avoid JavaScript precision loss
     const safe = efforts.map((e: any) => ({
       ...e,
       id: String(e.id),
