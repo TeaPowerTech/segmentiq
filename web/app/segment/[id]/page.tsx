@@ -72,10 +72,20 @@ function SegmentContent() {
         }
         if (!res.ok) throw new Error('Failed to fetch')
 
-        const json = await res.json()
-        setEfforts(json.data)
-        if (json.data.length > 0) {
-          setSegment(json.data[0].segment)
+        // Read as text first to prevent JSON.parse from corrupting large IDs
+        const text = await res.text()
+        const json = JSON.parse(text)
+
+        // Force IDs to strings after parsing — JSON.parse loses precision
+        const safeEfforts = json.data.map((e: any) => ({
+          ...e,
+          id: String(e.id),
+          activity: e.activity ? { ...e.activity, id: String(e.activity.id) } : e.activity,
+        }))
+
+        setEfforts(safeEfforts)
+        if (safeEfforts.length > 0) {
+          setSegment(safeEfforts[0].segment)
         }
       } catch (err) {
         setError('Failed to load efforts')
