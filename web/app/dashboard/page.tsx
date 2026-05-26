@@ -11,7 +11,12 @@ interface Effort {
   average_watts?: number
   pr_rank: number | null
   device_watts: boolean
+}
+
+interface SegmentResult {
   segment: any
+  efforts: Effort[]
+  bestEffort: Effort
 }
 
 function formatTime(seconds: number): string {
@@ -52,39 +57,59 @@ function DashboardContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const name = searchParams.get('name') ?? 'Athlete'
-  const [efforts, setEfforts] = useState<Effort[]>([])
+  const [segments, setSegments] = useState<SegmentResult[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const SEGMENT_IDS = [37191008]
-
   useEffect(() => {
     async function loadSegments() {
-      // Check session exists in localStorage
       const session = localStorage.getItem('session')
-      if (!session) {
-        router.push('/')
-        return
-      }
+      if (!session) { router.push('/'); return }
 
       try {
-        const allEfforts: Effort[] = []
-        for (const segmentId of SEGMENT_IDS) {
-          const res = await fetch(`/api/segments/${segmentId}/efforts`, {
-            headers: {
-              'x-session': session,
-            },
-          })
-          if (res.status === 401) {
-            localStorage.removeItem('session')
-            router.push('/')
-            return
-          }
-          if (!res.ok) continue
-          const json = await res.json()
-          allEfforts.push(...json.data)
+        // Fetch starred segments
+        const starredRes = await fetch('/api/segments/starred', {
+          headers: { 'x-session': session },
+        })
+        if (starredRes.status === 401) {
+          localStorage.removeItem('session')
+          router.push('/')
+          return
         }
-        setEfforts(allEfforts)
+        if (!starredRes.ok) throw new Error('Failed to fetch starred segments')
+
+        const starredJson = await starredRes.json()
+        const starred = starredJson.data
+
+        if (starred.length === 0) {
+          setSegments([])
+          setLoading(false)
+          return
+        }
+
+        // Fetch efforts for each starred segment in parallel
+        const results = await Promise.all(
+          starred.map(async (segment: any) => {
+            try {
+              const res = await fetch(`/api/segments/${segment.id}/efforts`, {
+                headers: { 'x-session': session },
+              })
+              if (!res.ok) return null
+              const json = await res.json()
+              const efforts: Effort[] = json.data
+              if (efforts.length === 0) return null
+              return {
+                segment,
+                efforts,
+                bestEffort: efforts[0],
+              }
+            } catch {
+              return null
+            }
+          })
+        )
+
+        setSegments(results.filter(Boolean) as SegmentResult[])
       } catch (err) {
         setError('Failed to load segments')
       } finally {
@@ -93,8 +118,6 @@ function DashboardContent() {
     }
     loadSegments()
   }, [])
-
-  const bestEffort = efforts[0]
 
   return (
     <main className="min-h-screen bg-background">
@@ -113,7 +136,9 @@ function DashboardContent() {
       <div className="max-w-2xl mx-auto px-4 py-6">
         <div className="mb-6">
           <h1 className="text-xl font-semibold">Your Segments</h1>
-          <p className="text-text-secondary text-sm mt-1">Tap a segment to replay your efforts</p>
+          <p className="text-text-secondary text-sm mt-1">
+            Tap a segment to replay your efforts
+          </p>
         </div>
 
         {loading && (
@@ -133,25 +158,28 @@ function DashboardContent() {
           </div>
         )}
 
-        {!loading && !error && bestEffort && (
+        {!loading && !error && segments.map(({ segment, efforts, bestEffort }) => (
           <div
+            key={segment.id}
             className="bg-surface border border-border rounded-2xl p-4 mb-3 cursor-pointer hover:border-strava transition-colors"
-            onClick={() => router.push(`/segment/${bestEffort.segment.id}`)}
+            onClick={() => router.push(`/segment/${segment.id}`)}
           >
             <div className="flex items-start justify-between mb-3">
               <div>
                 <div className="flex items-center gap-2 mb-1">
-                  <h2 className="font-medium text-sm">{bestEffort.segment.name}</h2>
+                  <h2 className="font-medium text-sm">{segment.name}</h2>
                   {bestEffort.pr_rank === 1 && <PrBadge rank={1} />}
                 </div>
                 <p className="text-text-muted text-xs">
-                  {formatDistance(bestEffort.segment.distance)}
-                  {bestEffort.segment.average_grade !== 0 && ` · ${bestEffort.segment.average_grade}% avg grade`}
-                  {bestEffort.segment.state && ` · ${bestEffort.segment.state}`}
+                  {formatDistance(segment.distance)}
+                  {segment.average_grade !== 0 && ` · ${segment.average_grade}% avg grade`}
+                  {segment.state && ` · ${segment.state}`}
                 </p>
               </div>
               <div className="text-right">
-                <div className="text-strava font-semibold text-sm">{formatTime(bestEffort.elapsed_time)}</div>
+                <div className="text-strava font-semibold text-sm">
+                  {formatTime(bestEffort.elapsed_time)}
+                </div>
                 <div className="text-text-muted text-xs">Best effort</div>
               </div>
             </div>
@@ -160,27 +188,38 @@ function DashboardContent() {
               {bestEffort.average_heartrate && (
                 <div className="flex items-center gap-1.5">
                   <span className="text-red-400 text-xs">♥</span>
-                  <span className="text-text-secondary text-xs">{Math.round(bestEffort.average_heartrate)} bpm</span>
+                  <span className="text-text-secondary text-xs">
+                    {Math.round(bestEffort.average_heartrate)} bpm
+                  </span>
                 </div>
               )}
               {bestEffort.average_watts && bestEffort.device_watts && (
                 <div className="flex items-center gap-1.5">
                   <span className="text-yellow-400 text-xs">⚡</span>
-                  <span className="text-text-secondary text-xs">{Math.round(bestEffort.average_watts)}W</span>
+                  <span className="text-text-secondary text-xs">
+                    {Math.round(bestEffort.average_watts)}W
+                  </span>
                 </div>
               )}
               <div className="flex items-center gap-1.5 ml-auto">
-                <span className="text-text-muted text-xs">{efforts.length} efforts</span>
+                <span className="text-text-muted text-xs">
+                  {efforts.length} effort{efforts.length !== 1 ? 's' : ''}
+                </span>
                 <span className="text-text-muted text-xs">·</span>
-                <span className="text-text-muted text-xs">Last {formatDate(efforts[efforts.length - 1].start_date)}</span>
+                <span className="text-text-muted text-xs">
+                  Last {formatDate(efforts[efforts.length - 1].start_date)}
+                </span>
               </div>
             </div>
           </div>
-        )}
+        ))}
 
-        {!loading && !error && efforts.length === 0 && (
+        {!loading && !error && segments.length === 0 && (
           <div className="text-center py-16">
-            <p className="text-text-secondary text-sm">No segments found.</p>
+            <p className="text-text-secondary text-sm">No starred segments found.</p>
+            <p className="text-text-muted text-xs mt-2">
+              Star some segments on Strava to see them here.
+            </p>
           </div>
         )}
       </div>
