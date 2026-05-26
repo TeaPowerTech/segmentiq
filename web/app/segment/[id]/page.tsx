@@ -3,6 +3,9 @@
 import React, { useEffect, useState, Suspense } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 
+const JSONBig = require('json-bigint')
+const JSONBigString = JSONBig({ storeAsString: true })
+
 interface Effort {
   id: string
   elapsed_time: number
@@ -72,20 +75,13 @@ function SegmentContent() {
         }
         if (!res.ok) throw new Error('Failed to fetch')
 
-        // Read as text first to prevent JSON.parse from corrupting large IDs
+        // Use json-bigint to parse — preserves 19-digit Strava IDs as strings
         const text = await res.text()
-        const json = JSON.parse(text)
+        const json = JSONBigString.parse(text)
 
-        // Force IDs to strings after parsing — JSON.parse loses precision
-        const safeEfforts = json.data.map((e: any) => ({
-          ...e,
-          id: String(e.id),
-          activity: e.activity ? { ...e.activity, id: String(e.activity.id) } : e.activity,
-        }))
-
-        setEfforts(safeEfforts)
-        if (safeEfforts.length > 0) {
-          setSegment(safeEfforts[0].segment)
+        setEfforts(json.data)
+        if (json.data.length > 0) {
+          setSegment(json.data[0].segment)
         }
       } catch (err) {
         setError('Failed to load efforts')
