@@ -6,9 +6,8 @@ const router = Router()
 const CLIENT_ID = process.env.STRAVA_CLIENT_ID!
 const CLIENT_SECRET = process.env.STRAVA_CLIENT_SECRET!
 const REDIRECT_URI = process.env.STRAVA_REDIRECT_URI!
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3001'
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000'
 
-// Step 1 — send user to Strava login page
 router.get('/auth/strava', (_req: Request, res: Response) => {
   const params = new URLSearchParams({
     client_id: CLIENT_ID,
@@ -20,7 +19,6 @@ router.get('/auth/strava', (_req: Request, res: Response) => {
   res.redirect(`https://www.strava.com/oauth/authorize?${params.toString()}`)
 })
 
-// Step 2 — Strava redirects back here with a code
 router.get('/auth/callback', async (req: Request, res: Response) => {
   const { code, error } = req.query
 
@@ -66,18 +64,22 @@ router.get('/auth/callback', async (req: Request, res: Response) => {
       scope: data.scope,
     })
 
-    // Set session cookie — browser never sees the Strava token
     const session = Buffer.from(JSON.stringify({
       athleteId: data.athlete.id,
       firstname: data.athlete.firstname,
       weightKg: data.athlete.weight ?? null,
     })).toString('base64')
 
+    // Parse the frontend domain for the cookie
+    const frontendHost = new URL(FRONTEND_URL).hostname
+
     res.cookie('session', session, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      secure: true,
+      sameSite: 'none',
+      domain: frontendHost,
       maxAge: 30 * 24 * 60 * 60 * 1000,
+      path: '/',
     })
 
     return res.redirect(
@@ -90,7 +92,6 @@ router.get('/auth/callback', async (req: Request, res: Response) => {
   }
 })
 
-// Logout
 router.post('/auth/logout', (req: Request, res: Response) => {
   const session = req.cookies?.session
   if (session) {
@@ -103,7 +104,6 @@ router.post('/auth/logout', (req: Request, res: Response) => {
   res.json({ ok: true })
 })
 
-// Check who is logged in
 router.get('/auth/me', (req: Request, res: Response) => {
   const session = req.cookies?.session
   if (!session) {
