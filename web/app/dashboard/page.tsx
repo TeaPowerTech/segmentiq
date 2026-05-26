@@ -60,11 +60,26 @@ function DashboardContent() {
 
   useEffect(() => {
     async function loadSegments() {
+      // Check session exists in localStorage
+      const session = localStorage.getItem('session')
+      if (!session) {
+        router.push('/')
+        return
+      }
+
       try {
         const allEfforts: Effort[] = []
         for (const segmentId of SEGMENT_IDS) {
-          const res = await fetch(`/api/segments/${segmentId}/efforts`)
-          if (res.status === 401) { router.push('/'); return }
+          const res = await fetch(`/api/segments/${segmentId}/efforts`, {
+            headers: {
+              'x-session': session,
+            },
+          })
+          if (res.status === 401) {
+            localStorage.removeItem('session')
+            router.push('/')
+            return
+          }
           if (!res.ok) continue
           const json = await res.json()
           allEfforts.push(...json.data)
