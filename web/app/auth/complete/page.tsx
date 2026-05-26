@@ -1,8 +1,7 @@
 'use client'
 
-import React, { useEffect } from 'react'
+import React, { useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Suspense } from 'react'
 
 function AuthCompleteContent() {
   const router = useRouter()
@@ -17,7 +16,6 @@ function AuthCompleteContent() {
       return
     }
 
-    // Store session in localStorage — same domain as Vercel
     localStorage.setItem('session', token)
     router.push(`/dashboard?name=${encodeURIComponent(name)}`)
   }, [])
