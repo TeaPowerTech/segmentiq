@@ -1,15 +1,17 @@
 'use client'
 
 import React, { useEffect, useState, Suspense } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 
-interface EffortPoint {
-  distancePct: number
-  heartRate: number | null
-  speedKph: number
-  powerWatts: number | null
-  wPerKg: number | null
-  elevationGainMetres: number
+interface Effort {
+  id: string
+  elapsed_time: number
+  start_date: string
+  average_heartrate?: number
+  average_watts?: number
+  pr_rank: number | null
+  device_watts: boolean
+  segment: any
 }
 
 interface NormalisedEffort {
@@ -21,7 +23,7 @@ interface NormalisedEffort {
   averageSpeedKph: number
   prRank: number | null
   hasPower: boolean
-  points: EffortPoint[]
+  points: any[]
   segment: {
     name: string
     distanceMetres: number
@@ -103,11 +105,9 @@ function MetricRow({
 
 function CompareContent() {
   const router = useRouter()
-  const searchParams = useSearchParams()
-  const effortIdA = searchParams.get('a')
-  const effortIdB = searchParams.get('b')
-
   const [data, setData] = useState<CompareData | null>(null)
+  const [summaryA, setSummaryA] = useState<Effort | null>(null)
+  const [summaryB, setSummaryB] = useState<Effort | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -116,15 +116,25 @@ function CompareContent() {
       const session = localStorage.getItem('session')
       if (!session) { router.push('/'); return }
 
-      if (!effortIdA || !effortIdB) {
-        setError('Missing effort IDs')
+      // Read effort summaries stored by segment page
+      const rawA = localStorage.getItem('compareEffortA')
+      const rawB = localStorage.getItem('compareEffortB')
+
+      if (!rawA || !rawB) {
+        setError('No efforts selected — please go back and select two efforts')
         setLoading(false)
         return
       }
 
+      const effortA: Effort = JSON.parse(rawA)
+      const effortB: Effort = JSON.parse(rawB)
+      setSummaryA(effortA)
+      setSummaryB(effortB)
+
+      // Fetch normalised data using the safe IDs
       try {
         const res = await fetch(
-          `/api/efforts/compare?a=${effortIdA}&b=${effortIdB}`,
+          `/api/efforts/compare?a=${effortA.id}&b=${effortB.id}`,
           { headers: { 'x-session': session } }
         )
         if (res.status === 401) {
@@ -137,13 +147,14 @@ function CompareContent() {
         const json = await res.json()
         setData(json.data)
       } catch (err) {
-        setError('Failed to load comparison')
+        setError('Failed to load comparison data')
       } finally {
         setLoading(false)
       }
     }
+
     loadComparison()
-  }, [effortIdA, effortIdB])
+  }, [])
 
   if (loading) {
     return (
@@ -153,12 +164,18 @@ function CompareContent() {
     )
   }
 
-  if (error || !data) {
+  if (error || !data || !summaryA || !summaryB) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center px-4">
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center px-4 gap-4">
         <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-4 text-red-400 text-sm">
           {error ?? 'Something went wrong'}
         </div>
+        <button
+          onClick={() => router.back()}
+          className="text-text-secondary text-sm hover:text-white transition-colors"
+        >
+          ← Go back
+        </button>
       </div>
     )
   }
@@ -189,8 +206,12 @@ function CompareContent() {
         <div className="grid grid-cols-2 gap-3 mb-6">
           <div className="bg-surface border-t-2 border-blue-400 border-x border-b border-border rounded-2xl p-4">
             <div className="text-blue-400 text-xs font-medium mb-1">Effort A</div>
-            <div className="text-white font-semibold text-lg">{formatTime(effortA.elapsedSeconds)}</div>
-            <div className="text-text-muted text-xs mt-1">{formatDate(effortA.startDate)}</div>
+            <div className="text-white font-semibold text-lg">
+              {formatTime(effortA.elapsedSeconds)}
+            </div>
+            <div className="text-text-muted text-xs mt-1">
+              {formatDate(effortA.startDate)}
+            </div>
             {effortA.prRank === 1 && (
               <span className="inline-block mt-2 text-xs font-medium px-2 py-0.5 rounded-full border bg-yellow-500/20 text-yellow-400 border-yellow-500/30">
                 PR
@@ -199,8 +220,12 @@ function CompareContent() {
           </div>
           <div className="bg-surface border-t-2 border-strava border-x border-b border-border rounded-2xl p-4">
             <div className="text-strava text-xs font-medium mb-1">Effort B</div>
-            <div className="text-white font-semibold text-lg">{formatTime(effortB.elapsedSeconds)}</div>
-            <div className="text-text-muted text-xs mt-1">{formatDate(effortB.startDate)}</div>
+            <div className="text-white font-semibold text-lg">
+              {formatTime(effortB.elapsedSeconds)}
+            </div>
+            <div className="text-text-muted text-xs mt-1">
+              {formatDate(effortB.startDate)}
+            </div>
             {effortB.prRank === 1 && (
               <span className="inline-block mt-2 text-xs font-medium px-2 py-0.5 rounded-full border bg-yellow-500/20 text-yellow-400 border-yellow-500/30">
                 PR
@@ -235,8 +260,6 @@ function CompareContent() {
 
         {/* Metrics comparison */}
         <div className="bg-surface border border-border rounded-2xl px-4 mb-6">
-
-          {/* Column labels */}
           <div className="grid grid-cols-3 items-center py-2 border-b border-border">
             <div className="text-blue-400 text-xs font-medium">A</div>
             <div className="text-center text-text-muted text-xs">Metric</div>
@@ -245,11 +268,12 @@ function CompareContent() {
 
           <MetricRow
             label="Avg HR"
-            valueA={effortA.averageHeartRate ? `${Math.round(effortA.averageHeartRate)} bpm` : null}
-            valueB={effortB.averageHeartRate ? `${Math.round(effortB.averageHeartRate)} bpm` : null}
+            valueA={effortA.averageHeartRate
+              ? `${Math.round(effortA.averageHeartRate)} bpm` : null}
+            valueB={effortB.averageHeartRate
+              ? `${Math.round(effortB.averageHeartRate)} bpm` : null}
             delta={effortA.averageHeartRate && effortB.averageHeartRate
-              ? effortA.averageHeartRate - effortB.averageHeartRate
-              : null}
+              ? effortA.averageHeartRate - effortB.averageHeartRate : null}
             unit=" bpm"
             invert={true}
           />
@@ -265,44 +289,37 @@ function CompareContent() {
           {(effortA.hasPower || effortB.hasPower) && (
             <MetricRow
               label="Avg power"
-              valueA={effortA.averagePowerWatts ? `${Math.round(effortA.averagePowerWatts)}W` : null}
-              valueB={effortB.averagePowerWatts ? `${Math.round(effortB.averagePowerWatts)}W` : null}
+              valueA={effortA.averagePowerWatts
+                ? `${Math.round(effortA.averagePowerWatts)}W` : null}
+              valueB={effortB.averagePowerWatts
+                ? `${Math.round(effortB.averagePowerWatts)}W` : null}
               delta={effortA.averagePowerWatts && effortB.averagePowerWatts
-                ? effortA.averagePowerWatts - effortB.averagePowerWatts
-                : null}
+                ? effortA.averagePowerWatts - effortB.averagePowerWatts : null}
               unit="W"
             />
           )}
-
-          <MetricRow
-            label="Elevation"
-            valueA={`${effortA.segment.averageGradePct}% grade`}
-            valueB={`${effortB.segment.averageGradePct}% grade`}
-            delta={null}
-            unit=""
-          />
         </div>
 
-        {/* Point by point speed chart placeholder */}
+        {/* Speed chart */}
         <div className="bg-surface border border-border rounded-2xl p-4 mb-6">
           <div className="text-xs text-text-muted mb-3">Speed across segment</div>
           <div className="relative h-24">
             <svg width="100%" height="100%" viewBox="0 0 200 60" preserveAspectRatio="none">
-              {/* Effort A speed line */}
               <polyline
                 points={effortA.points
-                  .filter((_, i) => i % 4 === 0)
-                  .map((p, i) => `${i * (200 / 50)},${60 - (p.speedKph / 40) * 60}`)
+                  .filter((_: any, i: number) => i % 4 === 0)
+                  .map((p: any, i: number) =>
+                    `${i * (200 / 50)},${60 - (p.speedKph / 40) * 60}`)
                   .join(' ')}
                 fill="none"
                 stroke="#60A5FA"
                 strokeWidth="1.5"
               />
-              {/* Effort B speed line */}
               <polyline
                 points={effortB.points
-                  .filter((_, i) => i % 4 === 0)
-                  .map((p, i) => `${i * (200 / 50)},${60 - (p.speedKph / 40) * 60}`)
+                  .filter((_: any, i: number) => i % 4 === 0)
+                  .map((p: any, i: number) =>
+                    `${i * (200 / 50)},${60 - (p.speedKph / 40) * 60}`)
                   .join(' ')}
                 fill="none"
                 stroke="#FC4C02"
@@ -317,13 +334,13 @@ function CompareContent() {
               <span className="text-text-muted text-xs">Effort A</span>
             </div>
             <div className="flex items-center gap-2">
-              <div className="w-4 h-0.5 bg-strava" style={{ borderTop: '1px dashed #FC4C02' }} />
+              <div className="w-4 h-0.5 bg-strava" />
               <span className="text-text-muted text-xs">Effort B</span>
             </div>
           </div>
         </div>
 
-        {/* HR chart if available */}
+        {/* HR chart */}
         {effortA.averageHeartRate && effortB.averageHeartRate && (
           <div className="bg-surface border border-border rounded-2xl p-4 mb-6">
             <div className="text-xs text-text-muted mb-3">Heart rate across segment</div>
@@ -331,8 +348,9 @@ function CompareContent() {
               <svg width="100%" height="100%" viewBox="0 0 200 60" preserveAspectRatio="none">
                 <polyline
                   points={effortA.points
-                    .filter((_, i) => i % 4 === 0)
-                    .map((p, i) => `${i * (200 / 50)},${60 - ((p.heartRate ?? 0) / 200) * 60}`)
+                    .filter((_: any, i: number) => i % 4 === 0)
+                    .map((p: any, i: number) =>
+                      `${i * (200 / 50)},${60 - ((p.heartRate ?? 0) / 200) * 60}`)
                     .join(' ')}
                   fill="none"
                   stroke="#60A5FA"
@@ -340,8 +358,9 @@ function CompareContent() {
                 />
                 <polyline
                   points={effortB.points
-                    .filter((_, i) => i % 4 === 0)
-                    .map((p, i) => `${i * (200 / 50)},${60 - ((p.heartRate ?? 0) / 200) * 60}`)
+                    .filter((_: any, i: number) => i % 4 === 0)
+                    .map((p: any, i: number) =>
+                      `${i * (200 / 50)},${60 - ((p.heartRate ?? 0) / 200) * 60}`)
                     .join(' ')}
                   fill="none"
                   stroke="#FC4C02"
