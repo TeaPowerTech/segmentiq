@@ -1,5 +1,4 @@
-import JSONBig from 'json-bigint'
-
+const JSONBig = require('json-bigint')
 const JSONBigString = JSONBig({ storeAsString: true })
 
 const STRAVA_BASE = 'https://www.strava.com/api/v3'
@@ -149,6 +148,16 @@ async function stravaRequest<T>(athleteId: number, url: string): Promise<T> {
   return JSONBigString.parse(text) as T
 }
 
+export async function fetchStarredSegments(
+  athleteId: number,
+  perPage = 50
+): Promise<any[]> {
+  return stravaRequest<any[]>(
+    athleteId,
+    `${STRAVA_BASE}/segments/starred?per_page=${perPage}`
+  )
+}
+
 export async function fetchEffort(
   athleteId: number,
   effortId: number
@@ -169,7 +178,6 @@ export async function fetchEffortStreams(
     `keys=${STREAM_KEYS}&key_by_type=true&resolution=high&series_type=distance`
 
   const raw = await stravaRequest<Record<string, any>>(athleteId, url)
-
   const sliced: any = {}
 
   if (raw.latlng) {
