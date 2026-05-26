@@ -60,20 +60,27 @@ function DashboardContent() {
   const [segments, setSegments] = useState<SegmentResult[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [rateLimited, setRateLimited] = useState(false)
 
   useEffect(() => {
+    let cancelled = false
+
     async function loadSegments() {
       const session = localStorage.getItem('session')
       if (!session) { router.push('/'); return }
 
       try {
-        // Fetch starred segments
         const starredRes = await fetch('/api/segments/starred', {
           headers: { 'x-session': session },
         })
         if (starredRes.status === 401) {
           localStorage.removeItem('session')
           router.push('/')
+          return
+        }
+        if (starredRes.status === 429) {
+          setRateLimited(true)
+          setLoading(false)
           return
         }
         if (!starredRes.ok) throw new Error('Failed to fetch starred segments')
@@ -87,36 +94,53 @@ function DashboardContent() {
           return
         }
 
-        // Fetch efforts for each starred segment in parallel
-        const results = await Promise.all(
-          starred.map(async (segment: any) => {
-            try {
-              const res = await fetch(`/api/segments/${segment.id}/efforts`, {
-                headers: { 'x-session': session },
-              })
-              if (!res.ok) return null
-              const json = await res.json()
-              const efforts: Effort[] = json.data
-              if (efforts.length === 0) return null
-              return {
+        // Fetch sequentially with delay to respect Strava rate limits
+        const results: SegmentResult[] = []
+        for (const segment of starred) {
+          if (cancelled) break
+          try {
+            const res = await fetch(`/api/segments/${segment.id}/efforts`, {
+              headers: { 'x-session': session },
+            })
+            if (res.status === 429) {
+              setRateLimited(true)
+              break
+            }
+            if (res.status === 401) {
+              localStorage.removeItem('session')
+              router.push('/')
+              return
+            }
+            if (!res.ok) continue
+
+            const json = await res.json()
+            const efforts: Effort[] = json.data
+            if (efforts.length > 0) {
+              results.push({
                 segment,
                 efforts,
                 bestEffort: efforts[0],
-              }
-            } catch {
-              return null
+              })
+              // Update incrementally so user sees segments appear
+              if (!cancelled) setSegments([...results])
             }
-          })
-        )
 
-        setSegments(results.filter(Boolean) as SegmentResult[])
+            // 200ms delay between requests to avoid rate limits
+            await new Promise(resolve => setTimeout(resolve, 200))
+          } catch {
+            continue
+          }
+        }
+
       } catch (err) {
-        setError('Failed to load segments')
+        if (!cancelled) setError('Failed to load segments')
       } finally {
-        setLoading(false)
+        if (!cancelled) setLoading(false)
       }
     }
+
     loadSegments()
+    return () => { cancelled = true }
   }, [])
 
   return (
@@ -141,7 +165,13 @@ function DashboardContent() {
           </p>
         </div>
 
-        {loading && (
+        {rateLimited && (
+          <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-2xl p-4 mb-4 text-yellow-400 text-sm">
+            Strava rate limit reached — showing segments loaded so far. Try again in 15 minutes.
+          </div>
+        )}
+
+        {loading && segments.length === 0 && (
           <div className="flex flex-col gap-3">
             {[1, 2, 3].map(i => (
               <div key={i} className="bg-surface border border-border rounded-2xl p-4 animate-pulse">
@@ -152,13 +182,20 @@ function DashboardContent() {
           </div>
         )}
 
+        {loading && segments.length > 0 && (
+          <div className="text-text-muted text-xs mb-4 flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full border-2 border-strava border-t-transparent animate-spin" />
+            Loading more segments...
+          </div>
+        )}
+
         {error && (
           <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-4 text-red-400 text-sm">
             {error}
           </div>
         )}
 
-        {!loading && !error && segments.map(({ segment, efforts, bestEffort }) => (
+        {segments.map(({ segment, efforts, bestEffort }) => (
           <div
             key={segment.id}
             className="bg-surface border border-border rounded-2xl p-4 mb-3 cursor-pointer hover:border-strava transition-colors"
@@ -214,7 +251,7 @@ function DashboardContent() {
           </div>
         ))}
 
-        {!loading && !error && segments.length === 0 && (
+        {!loading && !error && segments.length === 0 && !rateLimited && (
           <div className="text-center py-16">
             <p className="text-text-secondary text-sm">No starred segments found.</p>
             <p className="text-text-muted text-xs mt-2">
