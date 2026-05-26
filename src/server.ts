@@ -62,6 +62,29 @@ function requireSession(req: any, res: Response, next: any) {
   }
 }
 
+// ─── Safe ID map ──────────────────────────────────────────────────────────────
+// Strava effort IDs are 19-digit numbers that exceed JavaScript's
+// Number.MAX_SAFE_INTEGER. Browsers corrupt them during JSON.parse regardless
+// of what the frontend does. The fix is to never send large IDs to the browser.
+// Instead we map each real ID to a short safe integer key, and resolve it back
+// to the real ID server-side before calling Strava.
+
+const idMap = new Map<string, string>()
+let idCounter = 1
+
+function toSafeId(realId: string): string {
+  for (const [safe, real] of idMap.entries()) {
+    if (real === realId) return safe
+  }
+  const safe = String(idCounter++)
+  idMap.set(safe, realId)
+  return safe
+}
+
+function toRealId(safeKey: string): string | null {
+  return idMap.get(safeKey) ?? null
+}
+
 // ─── Cache ────────────────────────────────────────────────────────────────────
 
 const cache = new EffortCache(createInMemoryCacheStore())
@@ -94,9 +117,10 @@ app.get('/api/segments/:segmentId/efforts', requireSession, async (req: any, res
     const segmentId = parseInt(req.params.segmentId, 10)
     const efforts = await fetchSegmentEfforts(req.athleteId, segmentId)
 
+    // Replace large Strava IDs with safe short keys the browser can handle
     const safe = efforts.map((e: any) => ({
       ...e,
-      id: String(e.id),
+      id: toSafeId(String(e.id)),
       activity: { ...e.activity, id: String(e.activity.id) },
     }))
 
@@ -109,10 +133,16 @@ app.get('/api/segments/:segmentId/efforts', requireSession, async (req: any, res
 // ─── GET /api/efforts/:effortId ───────────────────────────────────────────────
 
 app.get('/api/efforts/:effortId', requireSession, async (req: any, res: Response) => {
-  const effortId = req.params.effortId
+  const safeKey = req.params.effortId
+
+  // Resolve safe key back to real Strava ID
+  const realEffortId = toRealId(safeKey)
+  if (!realEffortId) {
+    return res.status(404).json({ error: 'Effort not found.', code: 'EFFORT_NOT_FOUND' })
+  }
 
   try {
-    const cached = await cache.get(req.athleteId, effortId)
+    const cached = await cache.get(req.athleteId, realEffortId)
     if (cached) {
       res.setHeader('X-Cache', 'HIT')
       return res.json({
@@ -124,7 +154,7 @@ app.get('/api/efforts/:effortId', requireSession, async (req: any, res: Response
 
     res.setHeader('X-Cache', 'MISS')
 
-    const rawEffort = await fetchEffort(req.athleteId, parseInt(effortId, 10))
+    const rawEffort = await fetchEffort(req.athleteId, parseInt(realEffortId, 10))
     const streams = await fetchEffortStreams(
       req.athleteId,
       rawEffort.activity.id,
@@ -146,19 +176,30 @@ app.get('/api/efforts/:effortId', requireSession, async (req: any, res: Response
 // ─── GET /api/efforts/compare?a=:idA&b=:idB ──────────────────────────────────
 
 app.get('/api/efforts/compare', requireSession, async (req: any, res: Response) => {
-  const { a: effortIdA, b: effortIdB } = req.query
+  const { a: safeIdA, b: safeIdB } = req.query
 
-  if (typeof effortIdA !== 'string' || typeof effortIdB !== 'string') {
+  if (typeof safeIdA !== 'string' || typeof safeIdB !== 'string') {
     return res.status(400).json({
       error: 'Both ?a= and ?b= effort IDs are required',
       code: 'INTERNAL_ERROR',
     })
   }
 
+  // Resolve safe keys back to real Strava IDs
+  const realIdA = toRealId(safeIdA)
+  const realIdB = toRealId(safeIdB)
+
+  if (!realIdA || !realIdB) {
+    return res.status(404).json({
+      error: 'One or both efforts not found. Please go back and try again.',
+      code: 'EFFORT_NOT_FOUND',
+    })
+  }
+
   try {
     const [resultA, resultB] = await Promise.all([
-      getOrFetch(req.athleteId, effortIdA, req.athleteWeightKg),
-      getOrFetch(req.athleteId, effortIdB, req.athleteWeightKg),
+      getOrFetch(req.athleteId, realIdA, req.athleteWeightKg),
+      getOrFetch(req.athleteId, realIdB, req.athleteWeightKg),
     ])
 
     const deltas = computeComparison(resultA.effort, resultB.effort)
@@ -181,13 +222,13 @@ app.get('/api/efforts/compare', requireSession, async (req: any, res: Response) 
 
 async function getOrFetch(
   athleteId: number,
-  effortId: string,
+  realEffortId: string,
   athleteWeightKg: number | null
 ) {
-  const cached = await cache.get(athleteId, effortId)
+  const cached = await cache.get(athleteId, realEffortId)
   if (cached) return cached
 
-  const rawEffort = await fetchEffort(athleteId, parseInt(effortId, 10))
+  const rawEffort = await fetchEffort(athleteId, parseInt(realEffortId, 10))
   const streams = await fetchEffortStreams(
     athleteId,
     rawEffort.activity.id,
