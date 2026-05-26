@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 
 interface Effort {
@@ -48,7 +48,7 @@ function PrBadge({ rank }: { rank: number }) {
   )
 }
 
-export default function Dashboard() {
+function DashboardContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const name = searchParams.get('name') ?? 'Athlete'
@@ -87,7 +87,7 @@ export default function Dashboard() {
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 bg-strava rounded-lg flex items-center justify-center">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="white">
-              <path d="M13.5 3L9 14h3.5L8.5 21l9-11h-4.5z"/>
+              <path d="M13.5 3L9 14h3.5L8.5 21l9-11h-4.5z" />
             </svg>
           </div>
           <span className="font-semibold text-sm tracking-tight">SegmentIQ</span>
@@ -103,10 +103,10 @@ export default function Dashboard() {
 
         {loading && (
           <div className="flex flex-col gap-3">
-            {[1,2,3].map(i => (
+            {[1, 2, 3].map(i => (
               <div key={i} className="bg-surface border border-border rounded-2xl p-4 animate-pulse">
-                <div className="h-4 bg-border rounded w-1/2 mb-3"/>
-                <div className="h-3 bg-border rounded w-1/3"/>
+                <div className="h-4 bg-border rounded w-1/2 mb-3" />
+                <div className="h-3 bg-border rounded w-1/3" />
               </div>
             ))}
           </div>
@@ -170,5 +170,17 @@ export default function Dashboard() {
         )}
       </div>
     </main>
+  )
+}
+
+export default function Dashboard() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-text-muted text-sm">Loading...</div>
+      </div>
+    }>
+      <DashboardContent />
+    </Suspense>
   )
 }
