@@ -3,9 +3,6 @@
 import React, { useEffect, useState, Suspense } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 
-const JSONBig = require('json-bigint')
-const JSONBigString = JSONBig({ storeAsString: true })
-
 interface Effort {
   id: string
   elapsed_time: number
@@ -54,7 +51,7 @@ function SegmentContent() {
   const [segment, setSegment] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [selected, setSelected] = useState<string[]>([])
+  const [selected, setSelected] = useState<number[]>([])
 
   useEffect(() => {
     async function loadEfforts() {
@@ -75,10 +72,7 @@ function SegmentContent() {
         }
         if (!res.ok) throw new Error('Failed to fetch')
 
-        // Use json-bigint to parse — preserves 19-digit Strava IDs as strings
-        const text = await res.text()
-        const json = JSONBigString.parse(text)
-
+        const json = await res.json()
         setEfforts(json.data)
         if (json.data.length > 0) {
           setSegment(json.data[0].segment)
@@ -93,17 +87,24 @@ function SegmentContent() {
     loadEfforts()
   }, [segmentId])
 
-  function toggleSelect(id: string) {
+  function toggleSelect(index: number) {
     setSelected(prev => {
-      if (prev.includes(id)) return prev.filter(s => s !== id)
-      if (prev.length >= 2) return [prev[1], id]
-      return [...prev, id]
+      if (prev.includes(index)) return prev.filter(s => s !== index)
+      if (prev.length >= 2) return [prev[1], index]
+      return [...prev, index]
     })
   }
 
   function handleCompare() {
     if (selected.length === 2) {
-      router.push(`/compare?a=${selected[0]}&b=${selected[1]}`)
+      const effortA = efforts[selected[0]]
+      const effortB = efforts[selected[1]]
+      if (!effortA || !effortB) return
+
+      // Store both effort objects in localStorage — no ID round trip needed
+      localStorage.setItem('compareEffortA', JSON.stringify(effortA))
+      localStorage.setItem('compareEffortB', JSON.stringify(effortB))
+      router.push('/compare')
     }
   }
 
@@ -118,7 +119,9 @@ function SegmentContent() {
         </button>
         <div>
           <h1 className="font-semibold text-sm">{segment?.name ?? 'Segment'}</h1>
-          <p className="text-text-muted text-xs">{efforts.length} effort{efforts.length !== 1 ? 's' : ''}</p>
+          <p className="text-text-muted text-xs">
+            {efforts.length} effort{efforts.length !== 1 ? 's' : ''}
+          </p>
         </div>
       </div>
 
@@ -166,16 +169,16 @@ function SegmentContent() {
         )}
 
         {!loading && !error && efforts.map((effort, index) => {
-          const isSelected = selected.includes(effort.id)
-          const selectionIndex = selected.indexOf(effort.id)
+          const isSelected = selected.includes(index)
+          const selectionIndex = selected.indexOf(index)
 
           return (
             <div
-              key={effort.id}
+              key={index}
               className={`bg-surface border rounded-2xl p-4 mb-3 cursor-pointer transition-all ${
                 isSelected ? 'border-strava' : 'border-border hover:border-strava/50'
               }`}
-              onClick={() => toggleSelect(effort.id)}
+              onClick={() => toggleSelect(index)}
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -190,7 +193,9 @@ function SegmentContent() {
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium">{formatDate(effort.start_date)}</span>
+                      <span className="text-sm font-medium">
+                        {formatDate(effort.start_date)}
+                      </span>
                       {effort.pr_rank && <PrBadge rank={effort.pr_rank} />}
                     </div>
                     <div className="flex items-center gap-3 mt-1">
