@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import React, { useEffect, useState, Suspense } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 
 interface Effort {
@@ -11,6 +11,7 @@ interface Effort {
   average_watts?: number
   pr_rank: number | null
   device_watts: boolean
+  segment: any
 }
 
 function formatTime(seconds: number): string {
@@ -41,7 +42,7 @@ function PrBadge({ rank }: { rank: number }) {
   )
 }
 
-export default function SegmentPage() {
+function SegmentContent() {
   const router = useRouter()
   const params = useParams()
   const segmentId = params.id as string
@@ -54,9 +55,18 @@ export default function SegmentPage() {
 
   useEffect(() => {
     async function loadEfforts() {
+      const session = localStorage.getItem('session')
+      if (!session) {
+        router.push('/')
+        return
+      }
+
       try {
-        const res = await fetch(`/api/segments/${segmentId}/efforts`)
+        const res = await fetch(`/api/segments/${segmentId}/efforts`, {
+          headers: { 'x-session': session },
+        })
         if (res.status === 401) {
+          localStorage.removeItem('session')
           router.push('/')
           return
         }
@@ -93,28 +103,21 @@ export default function SegmentPage() {
 
   return (
     <main className="min-h-screen bg-background">
-
-      {/* Header */}
       <div className="border-b border-border px-4 py-4 flex items-center gap-3">
         <button
           onClick={() => router.back()}
-          className="text-text-secondary hover:text-white transition-colors"
+          className="text-text-secondary hover:text-white transition-colors text-lg"
         >
           ←
         </button>
         <div>
-          <h1 className="font-semibold text-sm">
-            {segment?.name ?? 'Segment'}
-          </h1>
-          <p className="text-text-muted text-xs">
-            {efforts.length} effort{efforts.length !== 1 ? 's' : ''}
-          </p>
+          <h1 className="font-semibold text-sm">{segment?.name ?? 'Segment'}</h1>
+          <p className="text-text-muted text-xs">{efforts.length} effort{efforts.length !== 1 ? 's' : ''}</p>
         </div>
       </div>
 
       <div className="max-w-2xl mx-auto px-4 py-6">
 
-        {/* Compare bar */}
         {selected.length > 0 && (
           <div className="bg-surface border border-strava/30 rounded-2xl p-4 mb-4 flex items-center justify-between">
             <p className="text-sm text-text-secondary">
@@ -133,33 +136,29 @@ export default function SegmentPage() {
           </div>
         )}
 
-        {/* Instructions */}
         {selected.length === 0 && !loading && (
           <p className="text-text-muted text-xs mb-4">
-            Tap an effort to replay it, or select two to compare
+            Tap an effort to select it, or select two to compare
           </p>
         )}
 
-        {/* Loading */}
         {loading && (
           <div className="flex flex-col gap-3">
             {[1, 2, 3].map(i => (
               <div key={i} className="bg-surface border border-border rounded-2xl p-4 animate-pulse">
-                <div className="h-4 bg-border rounded w-1/3 mb-2"/>
-                <div className="h-3 bg-border rounded w-1/4"/>
+                <div className="h-4 bg-border rounded w-1/3 mb-2" />
+                <div className="h-3 bg-border rounded w-1/4" />
               </div>
             ))}
           </div>
         )}
 
-        {/* Error */}
         {error && (
           <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-4 text-red-400 text-sm">
             {error}
           </div>
         )}
 
-        {/* Efforts list */}
         {!loading && !error && efforts.map((effort, index) => {
           const isSelected = selected.includes(effort.id)
           const selectionIndex = selected.indexOf(effort.id)
@@ -168,16 +167,12 @@ export default function SegmentPage() {
             <div
               key={effort.id}
               className={`bg-surface border rounded-2xl p-4 mb-3 cursor-pointer transition-all ${
-                isSelected
-                  ? 'border-strava'
-                  : 'border-border hover:border-strava/50'
+                isSelected ? 'border-strava' : 'border-border hover:border-strava/50'
               }`}
               onClick={() => toggleSelect(effort.id)}
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-
-                  {/* Selection indicator */}
                   <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center text-xs font-medium transition-all ${
                     isSelected
                       ? selectionIndex === 0
@@ -187,12 +182,9 @@ export default function SegmentPage() {
                   }`}>
                     {isSelected ? (selectionIndex === 0 ? 'A' : 'B') : index + 1}
                   </div>
-
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium">
-                        {formatDate(effort.start_date)}
-                      </span>
+                      <span className="text-sm font-medium">{formatDate(effort.start_date)}</span>
                       {effort.pr_rank && <PrBadge rank={effort.pr_rank} />}
                     </div>
                     <div className="flex items-center gap-3 mt-1">
@@ -209,7 +201,6 @@ export default function SegmentPage() {
                     </div>
                   </div>
                 </div>
-
                 <div className="text-right">
                   <div className="text-white font-semibold text-sm">
                     {formatTime(effort.elapsed_time)}
@@ -222,5 +213,17 @@ export default function SegmentPage() {
 
       </div>
     </main>
+  )
+}
+
+export default function SegmentPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-text-muted text-sm">Loading...</div>
+      </div>
+    }>
+      <SegmentContent />
+    </Suspense>
   )
 }
