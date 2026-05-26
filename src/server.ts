@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express'
 import cookieParser from 'cookie-parser'
+import { Pool } from 'pg'
 import authRouter from './auth'
 import { normaliseEffort, computeComparison, NormaliseError } from './normalise'
 import { EffortCache, createInMemoryCacheStore } from './cache'
@@ -18,6 +19,110 @@ const port = process.env.PORT || 3000
 
 app.use(express.json())
 app.use(cookieParser())
+
+// ─── Postgres ─────────────────────────────────────────────────────────────────
+
+const db = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL?.includes('railway.internal')
+    ? false
+    : { rejectUnauthorized: false },
+})
+
+async function setupDatabase() {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS athlete_tokens (
+      athlete_id        INTEGER PRIMARY KEY,
+      access_token      TEXT NOT NULL,
+      refresh_token     TEXT NOT NULL,
+      expires_at        INTEGER NOT NULL,
+      scope             TEXT NOT NULL,
+      updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS effort_id_map (
+      safe_id     SERIAL PRIMARY KEY,
+      athlete_id  INTEGER NOT NULL,
+      real_id     TEXT NOT NULL,
+      created_at  TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(athlete_id, real_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_effort_id_map_athlete
+      ON effort_id_map(athlete_id);
+
+    CREATE TABLE IF NOT EXISTS effort_cache (
+      cache_key   TEXT PRIMARY KEY,
+      athlete_id  INTEGER NOT NULL,
+      effort_id   TEXT NOT NULL,
+      data        JSONB NOT NULL,
+      cached_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at  TIMESTAMPTZ NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_effort_cache_athlete
+      ON effort_cache(athlete_id);
+
+    CREATE INDEX IF NOT EXISTS idx_effort_cache_expires
+      ON effort_cache(expires_at);
+  `)
+  console.log('[db] tables ready')
+}
+
+// ─── Token store — Postgres backed ───────────────────────────────────────────
+
+export async function storeTokensInDb(params: {
+  athleteId: number
+  accessToken: string
+  refreshToken: string
+  expiresAt: number
+  scope: string
+}): Promise<void> {
+  await db.query(`
+    INSERT INTO athlete_tokens
+      (athlete_id, access_token, refresh_token, expires_at, scope, updated_at)
+    VALUES ($1, $2, $3, $4, $5, NOW())
+    ON CONFLICT (athlete_id) DO UPDATE SET
+      access_token  = EXCLUDED.access_token,
+      refresh_token = EXCLUDED.refresh_token,
+      expires_at    = EXCLUDED.expires_at,
+      scope         = EXCLUDED.scope,
+      updated_at    = NOW()
+  `, [params.athleteId, params.accessToken, params.refreshToken,
+      params.expiresAt, params.scope])
+}
+
+export async function getTokensFromDb(athleteId: number) {
+  const result = await db.query(
+    'SELECT * FROM athlete_tokens WHERE athlete_id = $1',
+    [athleteId]
+  )
+  return result.rows[0] ?? null
+}
+
+export async function deleteTokensFromDb(athleteId: number): Promise<void> {
+  await db.query('DELETE FROM athlete_tokens WHERE athlete_id = $1', [athleteId])
+}
+
+// ─── ID map — Postgres backed ─────────────────────────────────────────────────
+
+async function toSafeId(athleteId: number, realId: string): Promise<string> {
+  const result = await db.query(`
+    INSERT INTO effort_id_map (athlete_id, real_id)
+    VALUES ($1, $2)
+    ON CONFLICT (athlete_id, real_id) DO UPDATE SET real_id = EXCLUDED.real_id
+    RETURNING safe_id
+  `, [athleteId, realId])
+  return String(result.rows[0].safe_id)
+}
+
+async function toRealId(safeId: string): Promise<string | null> {
+  const result = await db.query(
+    'SELECT real_id FROM effort_id_map WHERE safe_id = $1',
+    [parseInt(safeId, 10)]
+  )
+  return result.rows[0]?.real_id ?? null
+}
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 
@@ -62,29 +167,6 @@ function requireSession(req: any, res: Response, next: any) {
   }
 }
 
-// ─── Safe ID map ──────────────────────────────────────────────────────────────
-// Strava effort IDs are 19-digit numbers that exceed JavaScript's
-// Number.MAX_SAFE_INTEGER. Browsers corrupt them during JSON.parse regardless
-// of what the frontend does. The fix is to never send large IDs to the browser.
-// Instead we map each real ID to a short safe integer key, and resolve it back
-// to the real ID server-side before calling Strava.
-
-const idMap = new Map<string, string>()
-let idCounter = 1
-
-function toSafeId(realId: string): string {
-  for (const [safe, real] of idMap.entries()) {
-    if (real === realId) return safe
-  }
-  const safe = String(idCounter++)
-  idMap.set(safe, realId)
-  return safe
-}
-
-function toRealId(safeKey: string): string | null {
-  return idMap.get(safeKey) ?? null
-}
-
 // ─── Cache ────────────────────────────────────────────────────────────────────
 
 const cache = new EffortCache(createInMemoryCacheStore())
@@ -117,12 +199,11 @@ app.get('/api/segments/:segmentId/efforts', requireSession, async (req: any, res
     const segmentId = parseInt(req.params.segmentId, 10)
     const efforts = await fetchSegmentEfforts(req.athleteId, segmentId)
 
-    // Replace large Strava IDs with safe short keys the browser can handle
-    const safe = efforts.map((e: any) => ({
+    const safe = await Promise.all(efforts.map(async (e: any) => ({
       ...e,
-      id: toSafeId(String(e.id)),
+      id: await toSafeId(req.athleteId, String(e.id)),
       activity: { ...e.activity, id: String(e.activity.id) },
-    }))
+    })))
 
     return res.json({ data: safe })
   } catch (err) {
@@ -135,8 +216,7 @@ app.get('/api/segments/:segmentId/efforts', requireSession, async (req: any, res
 app.get('/api/efforts/:effortId', requireSession, async (req: any, res: Response) => {
   const safeKey = req.params.effortId
 
-  // Resolve safe key back to real Strava ID
-  const realEffortId = toRealId(safeKey)
+  const realEffortId = await toRealId(safeKey)
   if (!realEffortId) {
     return res.status(404).json({ error: 'Effort not found.', code: 'EFFORT_NOT_FOUND' })
   }
@@ -185,13 +265,12 @@ app.get('/api/efforts/compare', requireSession, async (req: any, res: Response) 
     })
   }
 
-  // Resolve safe keys back to real Strava IDs
-  const realIdA = toRealId(safeIdA)
-  const realIdB = toRealId(safeIdB)
+  const realIdA = await toRealId(safeIdA)
+  const realIdB = await toRealId(safeIdB)
 
   if (!realIdA || !realIdB) {
     return res.status(404).json({
-      error: 'One or both efforts not found. Please go back and try again.',
+      error: 'One or both efforts not found. Please go back and reselect.',
       code: 'EFFORT_NOT_FOUND',
     })
   }
@@ -279,6 +358,15 @@ function handleError(err: unknown, res: Response) {
   })
 }
 
-app.listen(port, () => {
-  console.log(`SegmentIQ API running on port ${port}`)
-})
+// ─── Start ────────────────────────────────────────────────────────────────────
+
+setupDatabase()
+  .then(() => {
+    app.listen(port, () => {
+      console.log(`SegmentIQ API running on port ${port}`)
+    })
+  })
+  .catch(err => {
+    console.error('[fatal] database setup failed:', err)
+    process.exit(1)
+  })
