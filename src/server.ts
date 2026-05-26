@@ -7,6 +7,7 @@ import {
   fetchEffort,
   fetchEffortStreams,
   fetchSegmentEfforts,
+  fetchStarredSegments,
   StravaAuthError,
   StravaRateLimitError,
   StravaNotFoundError,
@@ -18,7 +19,7 @@ const port = process.env.PORT || 3000
 app.use(express.json())
 app.use(cookieParser())
 
-// ─── CORS — allow Vercel frontend ─────────────────────────────────────────────
+// ─── CORS ─────────────────────────────────────────────────────────────────────
 
 app.use((req, res, next) => {
   const origin = req.headers.origin
@@ -42,7 +43,6 @@ app.use((req, res, next) => {
 app.use('/api', authRouter)
 
 // ─── Session middleware ───────────────────────────────────────────────────────
-// Reads session from either cookie (legacy) or x-session header (cross-domain)
 
 function requireSession(req: any, res: Response, next: any) {
   const sessionFromHeader = req.headers['x-session'] as string | undefined
@@ -70,6 +70,21 @@ const cache = new EffortCache(createInMemoryCacheStore())
 
 app.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', app: 'SegmentIQ API' })
+})
+
+// ─── GET /api/segments/starred ────────────────────────────────────────────────
+
+app.get('/api/segments/starred', requireSession, async (req: any, res: Response) => {
+  try {
+    const segments = await fetchStarredSegments(req.athleteId)
+    const safe = segments.map((s: any) => ({
+      ...s,
+      id: String(s.id),
+    }))
+    return res.json({ data: safe })
+  } catch (err) {
+    return handleError(err, res)
+  }
 })
 
 // ─── GET /api/segments/:segmentId/efforts ─────────────────────────────────────
