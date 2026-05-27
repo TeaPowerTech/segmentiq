@@ -1,6 +1,3 @@
-const JSONBig = require('json-bigint')
-const JSONBigString = JSONBig({ storeAsString: true })
-
 const STRAVA_BASE = 'https://www.strava.com/api/v3'
 const STREAM_KEYS = 'latlng,distance,altitude,velocity_smooth,heartrate,watts,cadence'
 
@@ -93,7 +90,7 @@ async function getValidAccessToken(athleteId: number): Promise<string> {
   }
 
   const text = await response.text()
-  const data = JSONBigString.parse(text) as {
+  const data = parseStravaJson(text) as {
     access_token: string
     refresh_token: string
     expires_at: number
@@ -109,26 +106,24 @@ async function getValidAccessToken(athleteId: number): Promise<string> {
   return data.access_token
 }
 
-// ─── Safe string conversion ───────────────────────────────────────────────────
-// Converts all ID fields to strings immediately after parsing.
-// Must be called before any object passes through JSON.stringify
-// which would corrupt large integers.
+// ─── Safe JSON parsing ────────────────────────────────────────────────────────
+// Strava IDs are 19-digit integers that exceed JavaScript's Number.MAX_SAFE_INTEGER.
+// json-bigint does not reliably preserve these in all Node.js environments.
+// The only guaranteed fix is a regex replacement on the raw JSON text that
+// wraps all large integer ID values in quotes BEFORE JSON.parse ever sees them.
+// This prevents precision loss at the JavaScript engine level.
 
-function safeStringifyIds(obj: any): any {
-  if (obj === null || obj === undefined) return obj
-  if (Array.isArray(obj)) return obj.map(safeStringifyIds)
-  if (typeof obj === 'object') {
-    const result: any = {}
-    for (const [key, value] of Object.entries(obj)) {
-      if (key === 'id' || key.endsWith('_id')) {
-        result[key] = String(value)
-      } else {
-        result[key] = safeStringifyIds(value)
-      }
-    }
-    return result
-  }
-  return obj
+function parseStravaJson(text: string): any {
+  // Match any JSON key that looks like an ID field followed by a large integer
+  // and wrap the integer in quotes to make it a string
+  const safeText = text
+    .replace(/"id"\s*:\s*(\d{10,})/g, '"id":"$1"')
+    .replace(/"athlete_id"\s*:\s*(\d{10,})/g, '"athlete_id":"$1"')
+    .replace(/"activity_id"\s*:\s*(\d{10,})/g, '"activity_id":"$1"')
+    .replace(/"segment_id"\s*:\s*(\d{10,})/g, '"segment_id":"$1"')
+    .replace(/"gear_id"\s*:\s*(\d{10,})/g, '"gear_id":"$1"')
+
+  return JSON.parse(safeText)
 }
 
 // ─── API calls ────────────────────────────────────────────────────────────────
@@ -167,8 +162,7 @@ async function stravaRequest<T>(athleteId: number, url: string): Promise<T> {
   }
 
   const text = await response.text()
-  const parsed = JSONBigString.parse(text)
-  return safeStringifyIds(parsed) as T
+  return parseStravaJson(text) as T
 }
 
 export async function fetchStarredSegments(
@@ -181,8 +175,6 @@ export async function fetchStarredSegments(
   )
 }
 
-// effortId is passed as a string to avoid JavaScript number precision loss
-// on 19-digit Strava IDs — never convert to number
 export async function fetchEffort(
   athleteId: number,
   effortId: string
