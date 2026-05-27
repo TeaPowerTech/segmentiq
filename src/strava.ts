@@ -109,6 +109,28 @@ async function getValidAccessToken(athleteId: number): Promise<string> {
   return data.access_token
 }
 
+// ─── Safe string conversion ───────────────────────────────────────────────────
+// Converts all ID fields to strings immediately after parsing.
+// Must be called before any object passes through JSON.stringify
+// which would corrupt large integers.
+
+function safeStringifyIds(obj: any): any {
+  if (obj === null || obj === undefined) return obj
+  if (Array.isArray(obj)) return obj.map(safeStringifyIds)
+  if (typeof obj === 'object') {
+    const result: any = {}
+    for (const [key, value] of Object.entries(obj)) {
+      if (key === 'id' || key.endsWith('_id')) {
+        result[key] = String(value)
+      } else {
+        result[key] = safeStringifyIds(value)
+      }
+    }
+    return result
+  }
+  return obj
+}
+
 // ─── API calls ────────────────────────────────────────────────────────────────
 
 async function stravaRequest<T>(athleteId: number, url: string): Promise<T> {
@@ -145,7 +167,10 @@ async function stravaRequest<T>(athleteId: number, url: string): Promise<T> {
   }
 
   const text = await response.text()
-  return JSONBigString.parse(text) as T
+  // Parse with json-bigint to preserve large IDs, then immediately
+  // convert all ID fields to strings before any JSON.stringify can corrupt them
+  const parsed = JSONBigString.parse(text)
+  return safeStringifyIds(parsed) as T
 }
 
 export async function fetchStarredSegments(
