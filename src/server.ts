@@ -213,49 +213,9 @@ app.get('/api/segments/:segmentId/efforts', requireSession, async (req: any, res
   }
 })
 
-// ─── GET /api/efforts/:effortId ───────────────────────────────────────────────
-
-app.get('/api/efforts/:effortId', requireSession, async (req: any, res: Response) => {
-  const safeKey = req.params.effortId
-
-  const realEffortId = await toRealId(safeKey)
-  if (!realEffortId) {
-    return res.status(404).json({ error: 'Effort not found.', code: 'EFFORT_NOT_FOUND' })
-  }
-
-  try {
-    const cached = await cache.get(req.athleteId, realEffortId)
-    if (cached) {
-      res.setHeader('X-Cache', 'HIT')
-      return res.json({
-        data: cached.effort,
-        cachedAt: cached.cachedAt,
-        cacheHit: true,
-      })
-    }
-
-    res.setHeader('X-Cache', 'MISS')
-
-    const rawEffort = await fetchEffort(req.athleteId, parseInt(realEffortId, 10))
-    const streams = await fetchEffortStreams(
-      req.athleteId,
-      rawEffort.activity.id,
-      rawEffort.start_index,
-      rawEffort.end_index
-    )
-
-    const normalised = normaliseEffort(rawEffort, streams, req.athleteWeightKg)
-    normalised.athleteId = req.athleteId
-    await cache.set(req.athleteId, normalised)
-
-    return res.json({ data: normalised, cachedAt: null, cacheHit: false })
-
-  } catch (err) {
-    return handleError(err, res)
-  }
-})
-
 // ─── GET /api/efforts/compare?a=:idA&b=:idB ──────────────────────────────────
+// MUST be registered before /api/efforts/:effortId to prevent Express
+// matching "compare" as the effortId parameter
 
 app.get('/api/efforts/compare', requireSession, async (req: any, res: Response) => {
   const { a: safeIdA, b: safeIdB } = req.query
@@ -293,6 +253,48 @@ app.get('/api/efforts/compare', requireSession, async (req: any, res: Response) 
       },
       cacheHit: resultA.cacheHit && resultB.cacheHit,
     })
+
+  } catch (err) {
+    return handleError(err, res)
+  }
+})
+
+// ─── GET /api/efforts/:effortId ───────────────────────────────────────────────
+
+app.get('/api/efforts/:effortId', requireSession, async (req: any, res: Response) => {
+  const safeKey = req.params.effortId
+
+  const realEffortId = await toRealId(safeKey)
+  if (!realEffortId) {
+    return res.status(404).json({ error: 'Effort not found.', code: 'EFFORT_NOT_FOUND' })
+  }
+
+  try {
+    const cached = await cache.get(req.athleteId, realEffortId)
+    if (cached) {
+      res.setHeader('X-Cache', 'HIT')
+      return res.json({
+        data: cached.effort,
+        cachedAt: cached.cachedAt,
+        cacheHit: true,
+      })
+    }
+
+    res.setHeader('X-Cache', 'MISS')
+
+    const rawEffort = await fetchEffort(req.athleteId, parseInt(realEffortId, 10))
+    const streams = await fetchEffortStreams(
+      req.athleteId,
+      rawEffort.activity.id,
+      rawEffort.start_index,
+      rawEffort.end_index
+    )
+
+    const normalised = normaliseEffort(rawEffort, streams, req.athleteWeightKg)
+    normalised.athleteId = req.athleteId
+    await cache.set(req.athleteId, normalised)
+
+    return res.json({ data: normalised, cachedAt: null, cacheHit: false })
 
   } catch (err) {
     return handleError(err, res)
