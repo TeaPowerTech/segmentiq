@@ -117,9 +117,11 @@ async function toSafeId(athleteId: number, realId: string): Promise<string> {
 }
 
 async function toRealId(safeId: string): Promise<string | null> {
+  const parsed = parseInt(safeId, 10)
+  if (isNaN(parsed)) return null
   const result = await db.query(
     'SELECT real_id FROM effort_id_map WHERE safe_id = $1',
-    [parseInt(safeId, 10)]
+    [parsed]
   )
   return result.rows[0]?.real_id ?? null
 }
@@ -270,7 +272,7 @@ app.get('/api/efforts/compare', requireSession, async (req: any, res: Response) 
 
   if (!realIdA || !realIdB) {
     return res.status(404).json({
-      error: 'One or both efforts not found. Please go back and reselect.',
+      error: 'Efforts not found — please go back and reselect.',
       code: 'EFFORT_NOT_FOUND',
     })
   }
