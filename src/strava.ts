@@ -167,8 +167,6 @@ async function stravaRequest<T>(athleteId: number, url: string): Promise<T> {
   }
 
   const text = await response.text()
-  // Parse with json-bigint to preserve large IDs, then immediately
-  // convert all ID fields to strings before any JSON.stringify can corrupt them
   const parsed = JSONBigString.parse(text)
   return safeStringifyIds(parsed) as T
 }
@@ -183,9 +181,11 @@ export async function fetchStarredSegments(
   )
 }
 
+// effortId is passed as a string to avoid JavaScript number precision loss
+// on 19-digit Strava IDs — never convert to number
 export async function fetchEffort(
   athleteId: number,
-  effortId: number
+  effortId: string
 ): Promise<any> {
   return stravaRequest<any>(
     athleteId,
@@ -195,7 +195,7 @@ export async function fetchEffort(
 
 export async function fetchEffortStreams(
   athleteId: number,
-  activityId: number,
+  activityId: string,
   startIndex: number,
   endIndex: number
 ): Promise<any> {
