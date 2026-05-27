@@ -282,7 +282,8 @@ app.get('/api/efforts/:effortId', requireSession, async (req: any, res: Response
 
     res.setHeader('X-Cache', 'MISS')
 
-    const rawEffort = await fetchEffort(req.athleteId, parseInt(realEffortId, 10))
+    // Pass effortId as string — never convert to number, precision loss on 19-digit IDs
+    const rawEffort = await fetchEffort(req.athleteId, realEffortId)
     const streams = await fetchEffortStreams(
       req.athleteId,
       rawEffort.activity.id,
@@ -311,7 +312,8 @@ async function getOrFetch(
   const cached = await cache.get(athleteId, realEffortId)
   if (cached) return cached
 
-  const rawEffort = await fetchEffort(athleteId, parseInt(realEffortId, 10))
+  // Pass effortId as string — never convert to number, precision loss on 19-digit IDs
+  const rawEffort = await fetchEffort(athleteId, realEffortId)
   const streams = await fetchEffortStreams(
     athleteId,
     rawEffort.activity.id,
