@@ -282,13 +282,12 @@ app.get('/api/efforts/:effortId', requireSession, async (req: any, res: Response
 
     res.setHeader('X-Cache', 'MISS')
 
-    // Pass effortId as string — never convert to number, precision loss on 19-digit IDs
     const rawEffort = await fetchEffort(req.athleteId, realEffortId)
     const streams = await fetchEffortStreams(
       req.athleteId,
       rawEffort.activity.id,
-      rawEffort.start_index,
-      rawEffort.end_index
+      parseInt(rawEffort.start_index, 10),
+      parseInt(rawEffort.end_index, 10)
     )
 
     const normalised = normaliseEffort(rawEffort, streams, req.athleteWeightKg)
@@ -312,13 +311,12 @@ async function getOrFetch(
   const cached = await cache.get(athleteId, realEffortId)
   if (cached) return cached
 
-  // Pass effortId as string — never convert to number, precision loss on 19-digit IDs
   const rawEffort = await fetchEffort(athleteId, realEffortId)
   const streams = await fetchEffortStreams(
     athleteId,
     rawEffort.activity.id,
-    rawEffort.start_index,
-    rawEffort.end_index
+    parseInt(rawEffort.start_index, 10),
+    parseInt(rawEffort.end_index, 10)
   )
 
   const normalised = normaliseEffort(rawEffort, streams, athleteWeightKg)
