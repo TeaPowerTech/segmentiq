@@ -132,43 +132,36 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
 
-  const PREVIEW_DURATION = 15000
-  const EXPORT_DURATION = 30000
+  // Store all props in refs so drawFrame never has stale closures
+  const effortARef = useRef(effortA)
+  const effortBRef = useRef(effortB)
+  const summaryARef = useRef(summaryA)
+  const summaryBRef = useRef(summaryB)
+
+  useEffect(() => { effortARef.current = effortA }, [effortA])
+  useEffect(() => { effortBRef.current = effortB }, [effortB])
+  useEffect(() => { summaryARef.current = summaryA }, [summaryA])
+  useEffect(() => { summaryBRef.current = summaryB }, [summaryB])
 
   const allElev = effortA.points.map(p => p.elevationMetres)
-  const minElev = Math.min(...allElev)
-  const maxElev = Math.max(...allElev)
-  const elevRange = maxElev - minElev || 1
+  const minElevRef = useRef(Math.min(...allElev))
+  const elevRangeRef = useRef(Math.max(...allElev) - Math.min(...allElev) || 1)
 
-  function getPointAt(effort: NormalisedEffort, t: number): EffortPoint {
-    const idx = Math.min(Math.floor(t * (effort.points.length - 1)), effort.points.length - 2)
-    const frac = t * (effort.points.length - 1) - idx
-    const a = effort.points[idx]
-    const b = effort.points[idx + 1]
-    return {
-      distancePct: a.distancePct + (b.distancePct - a.distancePct) * frac,
-      heartRate: a.heartRate != null && b.heartRate != null
-        ? a.heartRate + (b.heartRate - a.heartRate) * frac : null,
-      speedKph: a.speedKph + (b.speedKph - a.speedKph) * frac,
-      powerWatts: a.powerWatts != null && b.powerWatts != null
-        ? a.powerWatts + (b.powerWatts - a.powerWatts) * frac : null,
-      elevationMetres: a.elevationMetres + (b.elevationMetres - a.elevationMetres) * frac,
-      elevationGainMetres: a.elevationGainMetres + (b.elevationGainMetres - a.elevationGainMetres) * frac,
-    }
-  }
-
-  function avgSpeedAt(effort: NormalisedEffort, t: number): number {
-    const endIdx = Math.floor(t * (effort.points.length - 1))
-    const slice = effort.points.slice(0, endIdx + 1)
-    if (slice.length === 0) return 0
-    return slice.reduce((s, p) => s + p.speedKph, 0) / slice.length
-  }
+  const PREVIEW_DURATION = 15000
+  const EXPORT_DURATION = 30000
 
   const drawFrame = useCallback((t: number) => {
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
+
+    const eA = effortARef.current
+    const eB = effortBRef.current
+    const sA = summaryARef.current
+    const sB = summaryBRef.current
+    const minElev = minElevRef.current
+    const elevRange = elevRangeRef.current
 
     const W = canvas.width
     const H = canvas.height
@@ -182,8 +175,8 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
     ctx.fillStyle = '#FC4C02'
     ctx.fillRect(0, 0, 3, H)
 
-    const elevPts = effortA.points.map((p, i) => ({
-      x: PAD.left + (i / (effortA.points.length - 1)) * chartW,
+    const elevPts = eA.points.map((p, i) => ({
+      x: PAD.left + (i / (eA.points.length - 1)) * chartW,
       y: PAD.top + chartH - ((p.elevationMetres - minElev) / elevRange) * chartH,
     }))
 
@@ -206,14 +199,38 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
     ctx.stroke()
 
     const tA = Math.min(t, 1)
-    const ratioB = effortB ? effortB.elapsedSeconds / effortA.elapsedSeconds : 1
-    const tB = effortB ? Math.min(t / ratioB, 1) : 1
+    const ratioB = eB ? eB.elapsedSeconds / eA.elapsedSeconds : 1
+    const tB = eB ? Math.min(t / ratioB, 1) : 1
 
-    const trailAEnd = Math.floor(tA * (effortA.points.length - 1))
+    function getPointAt(effort: NormalisedEffort, t: number): EffortPoint {
+      const idx = Math.min(Math.floor(t * (effort.points.length - 1)), effort.points.length - 2)
+      const frac = t * (effort.points.length - 1) - idx
+      const a = effort.points[idx]
+      const b = effort.points[idx + 1]
+      return {
+        distancePct: a.distancePct + (b.distancePct - a.distancePct) * frac,
+        heartRate: a.heartRate != null && b.heartRate != null
+          ? a.heartRate + (b.heartRate - a.heartRate) * frac : null,
+        speedKph: a.speedKph + (b.speedKph - a.speedKph) * frac,
+        powerWatts: a.powerWatts != null && b.powerWatts != null
+          ? a.powerWatts + (b.powerWatts - a.powerWatts) * frac : null,
+        elevationMetres: a.elevationMetres + (b.elevationMetres - a.elevationMetres) * frac,
+        elevationGainMetres: a.elevationGainMetres + (b.elevationGainMetres - a.elevationGainMetres) * frac,
+      }
+    }
+
+    function avgSpeedAt(effort: NormalisedEffort, t: number): number {
+      const endIdx = Math.floor(t * (effort.points.length - 1))
+      const slice = effort.points.slice(0, endIdx + 1)
+      if (slice.length === 0) return 0
+      return slice.reduce((s, p) => s + p.speedKph, 0) / slice.length
+    }
+
+    const trailAEnd = Math.floor(tA * (eA.points.length - 1))
     if (trailAEnd > 0) {
       ctx.beginPath()
       for (let i = 0; i <= trailAEnd; i++) {
-        const p = effortA.points[i]
+        const p = eA.points[i]
         const x = PAD.left + p.distancePct * chartW
         const y = PAD.top + chartH - ((p.elevationMetres - minElev) / elevRange) * chartH
         i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)
@@ -224,12 +241,12 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
       ctx.stroke()
     }
 
-    if (effortB) {
-      const trailBEnd = Math.floor(tB * (effortB.points.length - 1))
+    if (eB) {
+      const trailBEnd = Math.floor(tB * (eB.points.length - 1))
       if (trailBEnd > 0) {
         ctx.beginPath()
         for (let i = 0; i <= trailBEnd; i++) {
-          const p = effortB.points[i]
+          const p = eB.points[i]
           const x = PAD.left + p.distancePct * chartW
           const elevY = PAD.top + chartH - ((p.elevationMetres - minElev) / elevRange) * chartH
           i === 0 ? ctx.moveTo(x, elevY) : ctx.lineTo(x, elevY)
@@ -241,7 +258,7 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
       }
     }
 
-    const ptA = getPointAt(effortA, tA)
+    const ptA = getPointAt(eA, tA)
     const dotAx = PAD.left + ptA.distancePct * chartW
     const dotAy = PAD.top + chartH - ((ptA.elevationMetres - minElev) / elevRange) * chartH
 
@@ -266,8 +283,8 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
     ctx.textAlign = 'center'
     ctx.fillText('A', dotAx, dotAy - 14)
 
-    if (effortB) {
-      const ptB = getPointAt(effortB, tB)
+    if (eB) {
+      const ptB = getPointAt(eB, tB)
       const dotBx = PAD.left + ptB.distancePct * chartW
       const dotBy = PAD.top + chartH - ((ptB.elevationMetres - minElev) / elevRange) * chartH
 
@@ -294,11 +311,7 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
     }
 
     const statsY = PAD.top + chartH + 12
-    const colW = W / (effortB ? 2 : 1)
-
-    const curSpeedA = ptA.speedKph
-    const avgSpeedA = avgSpeedAt(effortA, tA)
-    const curPowerA = ptA.powerWatts
+    const colW = W / (eB ? 2 : 1)
 
     ctx.fillStyle = '#60A5FA'
     ctx.font = 'bold 10px -apple-system, sans-serif'
@@ -307,23 +320,20 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
 
     ctx.fillStyle = '#ffffff'
     ctx.font = 'bold 18px -apple-system, sans-serif'
-    ctx.fillText(`${curSpeedA.toFixed(1)} km/h`, PAD.left, statsY + 32)
+    ctx.fillText(`${ptA.speedKph.toFixed(1)} km/h`, PAD.left, statsY + 32)
 
     ctx.fillStyle = '#888888'
     ctx.font = '10px -apple-system, sans-serif'
-    ctx.fillText(`avg ${avgSpeedA.toFixed(1)} km/h`, PAD.left, statsY + 46)
+    ctx.fillText(`avg ${avgSpeedAt(eA, tA).toFixed(1)} km/h`, PAD.left, statsY + 46)
 
-    if (curPowerA != null) {
+    if (ptA.powerWatts != null) {
       ctx.fillStyle = '#EAB308'
       ctx.font = '10px -apple-system, sans-serif'
-      ctx.fillText(`${Math.round(curPowerA)}W${!summaryA.device_watts ? ' est.' : ''}`, PAD.left, statsY + 60)
+      ctx.fillText(`${Math.round(ptA.powerWatts)}W${!sA.device_watts ? ' est.' : ''}`, PAD.left, statsY + 60)
     }
 
-    if (effortB && summaryB) {
-      const ptB2 = getPointAt(effortB, tB)
-      const curSpeedB = ptB2.speedKph
-      const avgSpeedB = avgSpeedAt(effortB, tB)
-      const curPowerB = ptB2.powerWatts
+    if (eB && sB) {
+      const ptB2 = getPointAt(eB, tB)
 
       ctx.fillStyle = '#FC4C02'
       ctx.font = 'bold 10px -apple-system, sans-serif'
@@ -332,16 +342,16 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
 
       ctx.fillStyle = '#ffffff'
       ctx.font = 'bold 18px -apple-system, sans-serif'
-      ctx.fillText(`${curSpeedB.toFixed(1)} km/h`, colW + PAD.left, statsY + 32)
+      ctx.fillText(`${ptB2.speedKph.toFixed(1)} km/h`, colW + PAD.left, statsY + 32)
 
       ctx.fillStyle = '#888888'
       ctx.font = '10px -apple-system, sans-serif'
-      ctx.fillText(`avg ${avgSpeedB.toFixed(1)} km/h`, colW + PAD.left, statsY + 46)
+      ctx.fillText(`avg ${avgSpeedAt(eB, tB).toFixed(1)} km/h`, colW + PAD.left, statsY + 46)
 
-      if (curPowerB != null) {
+      if (ptB2.powerWatts != null) {
         ctx.fillStyle = '#EAB308'
         ctx.font = '10px -apple-system, sans-serif'
-        ctx.fillText(`${Math.round(curPowerB)}W${!summaryB.device_watts ? ' est.' : ''}`, colW + PAD.left, statsY + 60)
+        ctx.fillText(`${Math.round(ptB2.powerWatts)}W${!sB.device_watts ? ' est.' : ''}`, colW + PAD.left, statsY + 60)
       }
 
       ctx.strokeStyle = '#1e1e1e'
@@ -359,10 +369,10 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
 
     ctx.fillStyle = '#2a2a2a'
     ctx.font = '9px -apple-system, sans-serif'
-    ctx.fillText(effortA.segment.name, W - PAD.right, statsY + 24)
+    ctx.fillText(eA.segment.name, W - PAD.right, statsY + 24)
 
-  }, [effortA, effortB, summaryA, summaryB, minElev, maxElev, elevRange])
-  const animate = useCallback((duration: number, startProgress: number, onComplete?: () => void) => {
+  }, [])
+const animate = useCallback((duration: number, startProgress: number, onComplete?: () => void) => {
     const startTime = performance.now()
     const startT = startProgress
 
