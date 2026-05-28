@@ -36,7 +36,7 @@ export function normaliseEffort(
     totalDistanceMetres: effort.distance,
     averageHeartRate: effort.average_heartrate ?? null,
     averagePowerWatts: effort.average_watts ?? null,
-    averageSpeedKph: effort.average_speed * 3.6,
+    averageSpeedKph: effort.distance / effort.elapsed_time * 3.6,
     prRank: effort.pr_rank ?? null,
     hasPower,
     points,
@@ -45,7 +45,7 @@ export function normaliseEffort(
       name: effort.segment.name,
       distanceMetres: effort.segment.distance,
       averageGradePct: effort.segment.average_grade,
-      totalElevationGainMetres: effort.segment.total_elevation_gain,
+      totalElevationGainMetres: effort.segment.total_elevation_gain ?? 0,
       climbCategory: effort.segment.climb_category,
     },
   }
@@ -134,8 +134,16 @@ interface RawPoint {
 }
 
 function buildRawPoints(streams: StravaStreamSet): RawPoint[] {
+  // Offset distance by the first point so distance starts at 0.
+  // The stream is sliced from start_index to end_index of the full activity,
+  // so absolute distances start at whatever offset that segment begins at
+  // in the activity. Without this offset the interpolator spreads 200 points
+  // across the full activity distance range, placing most points before the
+  // segment even starts.
+  const distanceOffset = streams.distance!.data[0]
+
   return Array.from({ length: streams.latlng!.data.length }, (_, i) => ({
-    distanceMetres: streams.distance!.data[i],
+    distanceMetres: streams.distance!.data[i] - distanceOffset,
     lat: streams.latlng!.data[i][0],
     lng: streams.latlng!.data[i][1],
     speedMs: streams.velocity_smooth!.data[i],
