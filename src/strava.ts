@@ -111,11 +111,8 @@ async function getValidAccessToken(athleteId: number): Promise<string> {
 // json-bigint does not reliably preserve these in all Node.js environments.
 // The only guaranteed fix is a regex replacement on the raw JSON text that
 // wraps all large integer ID values in quotes BEFORE JSON.parse ever sees them.
-// This prevents precision loss at the JavaScript engine level.
 
 function parseStravaJson(text: string): any {
-  // Match any JSON key that looks like an ID field followed by a large integer
-  // and wrap the integer in quotes to make it a string
   const safeText = text
     .replace(/"id"\s*:\s*(\d{10,})/g, '"id":"$1"')
     .replace(/"athlete_id"\s*:\s*(\d{10,})/g, '"athlete_id":"$1"')
@@ -191,8 +188,12 @@ export async function fetchEffortStreams(
   startIndex: number,
   endIndex: number
 ): Promise<any> {
+  // No resolution parameter — use Strava's native resolution so that
+  // start_index and end_index from the segment effort align correctly.
+  // Using resolution=high causes Strava to resample the stream which
+  // shifts the indices and produces incorrect segment slices.
   const url = `${STRAVA_BASE}/activities/${activityId}/streams?` +
-    `keys=${STREAM_KEYS}&key_by_type=true&resolution=high&series_type=distance`
+    `keys=${STREAM_KEYS}&key_by_type=true&series_type=distance`
 
   const raw = await stravaRequest<Record<string, any>>(athleteId, url)
   const sliced: any = {}
