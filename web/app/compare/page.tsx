@@ -20,7 +20,7 @@ interface NormalisedEffort {
   elapsedSeconds: number
   averageHeartRate: number | null
   averagePowerWatts: number | null
-  averageSpeedKph: number
+  averageSpeedKph: number | null
   prRank: number | null
   hasPower: boolean
   points: any[]
@@ -116,7 +116,6 @@ function CompareContent() {
       const session = localStorage.getItem('session')
       if (!session) { router.push('/'); return }
 
-      // Read effort summaries stored by segment page
       const rawA = localStorage.getItem('compareEffortA')
       const rawB = localStorage.getItem('compareEffortB')
 
@@ -131,7 +130,6 @@ function CompareContent() {
       setSummaryA(effortA)
       setSummaryB(effortB)
 
-      // Fetch normalised data using the safe IDs
       try {
         const res = await fetch(
           `/api/efforts/compare?a=${effortA.id}&b=${effortB.id}`,
@@ -268,11 +266,11 @@ function CompareContent() {
 
           <MetricRow
             label="Avg HR"
-            valueA={effortA.averageHeartRate
+            valueA={effortA.averageHeartRate != null
               ? `${Math.round(effortA.averageHeartRate)} bpm` : null}
-            valueB={effortB.averageHeartRate
+            valueB={effortB.averageHeartRate != null
               ? `${Math.round(effortB.averageHeartRate)} bpm` : null}
-            delta={effortA.averageHeartRate && effortB.averageHeartRate
+            delta={effortA.averageHeartRate != null && effortB.averageHeartRate != null
               ? effortA.averageHeartRate - effortB.averageHeartRate : null}
             unit=" bpm"
             invert={true}
@@ -280,20 +278,23 @@ function CompareContent() {
 
           <MetricRow
             label="Avg speed"
-            valueA={`${effortA.averageSpeedKph.toFixed(1)} km/h`}
-            valueB={`${effortB.averageSpeedKph.toFixed(1)} km/h`}
-            delta={effortA.averageSpeedKph - effortB.averageSpeedKph}
+            valueA={effortA.averageSpeedKph != null
+              ? `${effortA.averageSpeedKph.toFixed(1)} km/h` : null}
+            valueB={effortB.averageSpeedKph != null
+              ? `${effortB.averageSpeedKph.toFixed(1)} km/h` : null}
+            delta={effortA.averageSpeedKph != null && effortB.averageSpeedKph != null
+              ? effortA.averageSpeedKph - effortB.averageSpeedKph : null}
             unit=" km/h"
           />
 
           {(effortA.hasPower || effortB.hasPower) && (
             <MetricRow
               label="Avg power"
-              valueA={effortA.averagePowerWatts
+              valueA={effortA.averagePowerWatts != null
                 ? `${Math.round(effortA.averagePowerWatts)}W` : null}
-              valueB={effortB.averagePowerWatts
+              valueB={effortB.averagePowerWatts != null
                 ? `${Math.round(effortB.averagePowerWatts)}W` : null}
-              delta={effortA.averagePowerWatts && effortB.averagePowerWatts
+              delta={effortA.averagePowerWatts != null && effortB.averagePowerWatts != null
                 ? effortA.averagePowerWatts - effortB.averagePowerWatts : null}
               unit="W"
             />
@@ -301,56 +302,16 @@ function CompareContent() {
         </div>
 
         {/* Speed chart */}
-        <div className="bg-surface border border-border rounded-2xl p-4 mb-6">
-          <div className="text-xs text-text-muted mb-3">Speed across segment</div>
-          <div className="relative h-24">
-            <svg width="100%" height="100%" viewBox="0 0 200 60" preserveAspectRatio="none">
-              <polyline
-                points={effortA.points
-                  .filter((_: any, i: number) => i % 4 === 0)
-                  .map((p: any, i: number) =>
-                    `${i * (200 / 50)},${60 - (p.speedKph / 40) * 60}`)
-                  .join(' ')}
-                fill="none"
-                stroke="#60A5FA"
-                strokeWidth="1.5"
-              />
-              <polyline
-                points={effortB.points
-                  .filter((_: any, i: number) => i % 4 === 0)
-                  .map((p: any, i: number) =>
-                    `${i * (200 / 50)},${60 - (p.speedKph / 40) * 60}`)
-                  .join(' ')}
-                fill="none"
-                stroke="#FC4C02"
-                strokeWidth="1.5"
-                strokeDasharray="4 2"
-              />
-            </svg>
-          </div>
-          <div className="flex items-center gap-4 mt-2">
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-0.5 bg-blue-400" />
-              <span className="text-text-muted text-xs">Effort A</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-0.5 bg-strava" />
-              <span className="text-text-muted text-xs">Effort B</span>
-            </div>
-          </div>
-        </div>
-
-        {/* HR chart */}
-        {effortA.averageHeartRate && effortB.averageHeartRate && (
+        {effortA.points?.length > 0 && effortB.points?.length > 0 && (
           <div className="bg-surface border border-border rounded-2xl p-4 mb-6">
-            <div className="text-xs text-text-muted mb-3">Heart rate across segment</div>
+            <div className="text-xs text-text-muted mb-3">Speed across segment</div>
             <div className="relative h-24">
               <svg width="100%" height="100%" viewBox="0 0 200 60" preserveAspectRatio="none">
                 <polyline
                   points={effortA.points
                     .filter((_: any, i: number) => i % 4 === 0)
                     .map((p: any, i: number) =>
-                      `${i * (200 / 50)},${60 - ((p.heartRate ?? 0) / 200) * 60}`)
+                      `${i * (200 / 50)},${60 - ((p.speedKph ?? 0) / 40) * 60}`)
                     .join(' ')}
                   fill="none"
                   stroke="#60A5FA"
@@ -360,7 +321,7 @@ function CompareContent() {
                   points={effortB.points
                     .filter((_: any, i: number) => i % 4 === 0)
                     .map((p: any, i: number) =>
-                      `${i * (200 / 50)},${60 - ((p.heartRate ?? 0) / 200) * 60}`)
+                      `${i * (200 / 50)},${60 - ((p.speedKph ?? 0) / 40) * 60}`)
                     .join(' ')}
                   fill="none"
                   stroke="#FC4C02"
@@ -382,19 +343,4 @@ function CompareContent() {
           </div>
         )}
 
-      </div>
-    </main>
-  )
-}
-
-export default function ComparePage() {
-  return (
-    <Suspense fallback={
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-text-muted text-sm">Loading comparison...</div>
-      </div>
-    }>
-      <CompareContent />
-    </Suspense>
-  )
-}
+        {/* HR char
