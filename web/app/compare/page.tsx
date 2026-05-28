@@ -146,7 +146,7 @@ function drawExportCard(
   const ctx = canvas.getContext('2d')
   if (!ctx) return
 
-  const W = 390, H = 680
+  const W = 390, H = 700
   canvas.height = H
 
   const BG = '#0a0a0a'
@@ -178,6 +178,7 @@ function drawExportCard(
 
   const deltaColour = timeDelta < 0 ? GREEN : timeDelta > 0 ? RED : WHITE
 
+  // Background
   roundRect(0, 0, W, H, 16)
   ctx.fillStyle = BG
   ctx.fill()
@@ -186,9 +187,11 @@ function drawExportCard(
   ctx.lineWidth = 1
   ctx.stroke()
 
+  // Orange left accent
   ctx.fillStyle = ORANGE
   ctx.fillRect(0, 0, 4, H)
 
+  // Header
   ctx.fillStyle = SURFACE
   ctx.fillRect(0, 0, W, 58)
   ctx.strokeStyle = BORDER
@@ -217,20 +220,19 @@ function drawExportCard(
   ctx.textAlign = 'right'
   ctx.fillText('SEGMENTIQ', W - 20, 35)
 
+  // Times row
   const timesY = 58
   const halfW = W / 2
 
+  // Centre vertical divider only
   ctx.strokeStyle = BORDER
   ctx.lineWidth = 1
   ctx.beginPath()
   ctx.moveTo(halfW, timesY)
   ctx.lineTo(halfW, timesY + 110)
   ctx.stroke()
-  ctx.beginPath()
-  ctx.moveTo(0, timesY + 110)
-  ctx.lineTo(W, timesY + 110)
-  ctx.stroke()
 
+  // Effort A
   ctx.fillStyle = BLUE
   ctx.font = '500 10px -apple-system, sans-serif'
   ctx.textAlign = 'left'
@@ -258,20 +260,7 @@ function drawExportCard(
     ctx.fillText('PR', 34, timesY + 94)
   }
 
-  ctx.fillStyle = deltaColour
-  ctx.font = '600 13px -apple-system, sans-serif'
-  ctx.textAlign = 'center'
-  ctx.fillText(
-    timeDelta === 0 ? 'dead heat' : `${timeDelta < 0 ? '▲' : '▼'} ${Math.abs(timeDelta)}s`,
-    halfW, timesY + 48
-  )
-  ctx.fillStyle = DIM
-  ctx.font = '400 10px -apple-system, sans-serif'
-  ctx.fillText(
-    timeDelta < 0 ? 'A faster' : timeDelta > 0 ? 'B faster' : '',
-    halfW, timesY + 62
-  )
-
+  // Effort B
   ctx.fillStyle = ORANGE
   ctx.font = '500 10px -apple-system, sans-serif'
   ctx.textAlign = 'left'
@@ -299,7 +288,38 @@ function drawExportCard(
     ctx.fillText('PR', halfW + 34, timesY + 94)
   }
 
-  const metY = timesY + 110
+  // Delta banner — full width below times row
+  const deltaBgColour = timeDelta < 0
+    ? 'rgba(34,197,94,0.08)'
+    : timeDelta > 0
+    ? 'rgba(239,68,68,0.08)'
+    : 'rgba(255,255,255,0.04)'
+  ctx.fillStyle = deltaBgColour
+  ctx.fillRect(0, timesY + 110, W, 36)
+
+  ctx.strokeStyle = BORDER
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.moveTo(0, timesY + 110)
+  ctx.lineTo(W, timesY + 110)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.moveTo(0, timesY + 146)
+  ctx.lineTo(W, timesY + 146)
+  ctx.stroke()
+
+  ctx.fillStyle = deltaColour
+  ctx.font = '700 16px -apple-system, sans-serif'
+  ctx.textAlign = 'center'
+  ctx.fillText(
+    timeDelta === 0
+      ? 'Dead heat'
+      : `${timeDelta < 0 ? '▲' : '▼'} ${Math.abs(timeDelta)}s ${timeDelta < 0 ? '— A faster' : '— B faster'}`,
+    W / 2, timesY + 133
+  )
+
+  // Metrics section
+  const metY = timesY + 146
   const barW = W - 40
   const barMid = W / 2
 
@@ -668,7 +688,7 @@ function CompareContent() {
             <canvas
               ref={canvasRef}
               width={390}
-              height={680}
+              height={700}
               style={{ borderRadius: '12px', maxWidth: '100%' }}
             />
             <button
