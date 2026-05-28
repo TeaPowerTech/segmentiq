@@ -1,166 +1,390 @@
-// Animation loop
-  const animate = useCallback((duration: number, onComplete?: () => void) => {
-    const start = performance.now() - pausedAtRef.current * duration
-    startTimeRef.current = start
+'use client'
 
-    function frame(now: number) {
-      const elapsed = now - start
-      const t = Math.min(elapsed / duration, 1)
-      setProgress(t)
-      drawFrame(t)
+import React, { useEffect, useState, Suspense, useRef, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 
-      if (t < 1) {
-        animFrameRef.current = requestAnimationFrame(frame)
-      } else {
-        setPlaying(false)
-        pausedAtRef.current = 0
-        onComplete?.()
-      }
-    }
+interface Effort {
+  id: string
+  elapsed_time: number
+  start_date: string
+  average_heartrate?: number
+  average_watts?: number
+  pr_rank: number | null
+  device_watts: boolean
+  segment: any
+}
 
-    animFrameRef.current = requestAnimationFrame(frame)
-  }, [drawFrame])
+interface EffortPoint {
+  distancePct: number
+  heartRate: number | null
+  speedKph: number
+  powerWatts: number | null
+  elevationMetres: number
+  elevationGainMetres: number
+}
 
-  function play() {
-    cancelAnimationFrame(animFrameRef.current)
-    setPlaying(true)
-    animate(PREVIEW_DURATION)
+interface NormalisedEffort {
+  effortId: string
+  startDate: string
+  elapsedSeconds: number
+  averageHeartRate: number | null
+  averagePowerWatts: number | null
+  averageSpeedKph: number | null
+  prRank: number | null
+  hasPower: boolean
+  points: EffortPoint[]
+  segment: {
+    name: string
+    distanceMetres: number
+    averageGradePct: number
   }
+}
 
-  function pause() {
-    cancelAnimationFrame(animFrameRef.current)
-    setPlaying(false)
+interface CompareData {
+  effortA: NormalisedEffort
+  effortB: NormalisedEffort
+  deltas: {
+    heartRate: (number | null)[]
+    speedKph: number[]
+    powerWatts: (number | null)[]
+    totalTimeDeltaSeconds: number
   }
+}
 
-  function seek(t: number) {
-    cancelAnimationFrame(animFrameRef.current)
-    setPlaying(false)
-    pausedAtRef.current = t
-    setProgress(t)
-    drawFrame(t)
-  }
+function formatTime(seconds: number): string {
+  const mins = Math.floor(seconds / 60)
+  const secs = seconds % 60
+  return `${mins}:${secs.toString().padStart(2, '0')}`
+}
 
-  function restart() {
-    cancelAnimationFrame(animFrameRef.current)
-    pausedAtRef.current = 0
-    setProgress(0)
-    drawFrame(0)
-    setPlaying(false)
-  }
+function formatDate(dateStr: string): string {
+  return new Date(dateStr).toLocaleDateString('en-GB', {
+    day: 'numeric', month: 'short', year: 'numeric',
+  })
+}
 
-  // Draw initial frame on mount
-  useEffect(() => {
-    drawFrame(0)
-  }, [drawFrame])
+function DeltaBadge({ delta, unit, invert = false }: {
+  delta: number; unit: string; invert?: boolean
+}) {
+  const positive = invert ? delta < 0 : delta > 0
+  const colour = positive ? 'text-green-400' : delta === 0 ? 'text-text-muted' : 'text-red-400'
+  const sign = delta > 0 ? '+' : ''
+  return <span className={`text-xs font-medium ${colour}`}>{sign}{delta.toFixed(1)}{unit}</span>
+}
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => cancelAnimationFrame(animFrameRef.current)
-  }, [])
-
-  async function exportMp4() {
-    const canvas = canvasRef.current
-    if (!canvas) return
-
-    if (!window.MediaRecorder || !MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
-      setExportError('MP4 export requires Chrome or Firefox. Safari is not supported.')
-      return
-    }
-
-    setExporting(true)
-    setExportError(null)
-    cancelAnimationFrame(animFrameRef.current)
-    pausedAtRef.current = 0
-
-    const stream = canvas.captureStream(30)
-    const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8', videoBitsPerSecond: 4000000 })
-    const chunks: Blob[] = []
-
-    recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
-    recorder.onstop = () => {
-      const blob = new Blob(chunks, { type: 'video/webm' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = 'segmentiq-replay.webm'
-      a.click()
-      URL.revokeObjectURL(url)
-      setExporting(false)
-      drawFrame(progress)
-    }
-
-    recorder.start()
-    animate(EXPORT_DURATION, () => {
-      recorder.stop()
-    })
-  }
-
-  const progressPct = Math.round(progress * 100)
-
+function MetricRow({ label, valueA, valueB, delta, unit, invert = false }: {
+  label: string; valueA: string | null; valueB: string | null
+  delta: number | null; unit: string; invert?: boolean
+}) {
+  if (valueA == null && valueB == null) return null
   return (
-    <div className="bg-surface border border-border rounded-2xl p-4 mb-6">
-      <div className="text-xs text-text-muted mb-3">Segment replay</div>
-
-      <canvas
-        ref={canvasRef}
-        width={640}
-        height={280}
-        style={{ borderRadius: '8px', maxWidth: '100%', display: 'block' }}
-      />
-
-      {/* Scrubber */}
-      <div className="mt-3 flex items-center gap-3">
-        <button
-          onClick={playing ? pause : play}
-          className="w-8 h-8 rounded-full bg-strava flex items-center justify-center text-white text-xs flex-shrink-0"
-        >
-          {playing ? '⏸' : '▶'}
-        </button>
-        <input
-          type="range"
-          min={0}
-          max={100}
-          value={progressPct}
-          onChange={e => seek(parseInt(e.target.value) / 100)}
-          className="flex-1 accent-strava"
-        />
-        <span className="text-text-muted text-xs w-8 text-right">
-          {Math.round(progress * 15)}s
-        </span>
+    <div className="grid grid-cols-3 items-center py-3 border-b border-border last:border-0">
+      <div className="text-blue-400 text-sm font-medium">{valueA ?? '—'}</div>
+      <div className="text-center">
+        <div className="text-text-muted text-xs mb-1">{label}</div>
+        {delta != null && <DeltaBadge delta={delta} unit={unit} invert={invert} />}
       </div>
-
-      {/* Export button */}
-      <div className="mt-3 flex items-center gap-3">
-        <button
-          onClick={exporting ? undefined : exportMp4}
-          disabled={exporting}
-          className={`flex-1 text-sm font-medium py-2.5 rounded-xl transition-colors ${
-            exporting
-              ? 'bg-surface border border-border text-text-muted cursor-not-allowed'
-              : 'bg-strava hover:bg-strava-dark text-white'
-          }`}
-        >
-          {exporting ? 'Recording… play will complete automatically' : '⬇ Export replay video'}
-        </button>
-        <button
-          onClick={restart}
-          className="w-10 h-10 rounded-xl border border-border text-text-muted hover:text-white transition-colors text-sm"
-        >
-          ↺
-        </button>
-      </div>
-
-      {exportError && (
-        <div className="mt-2 text-xs text-red-400">{exportError}</div>
-      )}
-
-      <div className="mt-2 text-xs text-text-muted">
-        Preview plays at 15s · Export records full 30s replay
-      </div>
+      <div className="text-strava text-sm font-medium text-right">{valueB ?? '—'}</div>
     </div>
   )
 }
-// Animation loop
+
+function ScaledChart({ pointsA, pointsB, getValue }: {
+  pointsA: EffortPoint[]; pointsB: EffortPoint[]
+  getValue: (p: EffortPoint) => number | null
+}) {
+  const valsA = pointsA.map(getValue).filter((v): v is number => v != null)
+  const valsB = pointsB.map(getValue).filter((v): v is number => v != null)
+  const allVals = [...valsA, ...valsB]
+  if (allVals.length === 0) return null
+  const min = Math.min(...allVals)
+  const max = Math.max(...allVals)
+  const range = max - min || 1
+  const pad = 4
+  const toY = (v: number) => 60 - pad - ((v - min) / range) * (60 - pad * 2)
+  const lineA = pointsA.filter((_, i) => i % 4 === 0)
+    .map((p, i) => { const v = getValue(p); return v != null ? `${i * (200 / 50)},${toY(v)}` : null })
+    .filter(Boolean).join(' ')
+  const lineB = pointsB.filter((_, i) => i % 4 === 0)
+    .map((p, i) => { const v = getValue(p); return v != null ? `${i * (200 / 50)},${toY(v)}` : null })
+    .filter(Boolean).join(' ')
+  return (
+    <svg width="100%" height="100%" viewBox="0 0 200 60" preserveAspectRatio="none">
+      {lineA && <polyline points={lineA} fill="none" stroke="#60A5FA" strokeWidth="1.5" />}
+      {lineB && <polyline points={lineB} fill="none" stroke="#FC4C02" strokeWidth="1.5" strokeDasharray="4 2" />}
+    </svg>
+  )
+}
+
+// ─── Segment Replay Component ─────────────────────────────────────────────────
+
+interface SegmentReplayProps {
+  effortA: NormalisedEffort
+  effortB: NormalisedEffort | null
+  summaryA: Effort
+  summaryB: Effort | null
+}
+
+function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const animFrameRef = useRef<number>(0)
+  const startTimeRef = useRef<number>(0)
+  const pausedAtRef = useRef<number>(0)
+  const [playing, setPlaying] = useState(false)
+  const [progress, setProgress] = useState(0) // 0–1
+  const [exporting, setExporting] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
+
+  const PREVIEW_DURATION = 15000 // 15s preview
+  const EXPORT_DURATION = 30000  // 30s export
+
+  const allElev = effortA.points.map(p => p.elevationMetres)
+  const minElev = Math.min(...allElev)
+  const maxElev = Math.max(...allElev)
+  const elevRange = maxElev - minElev || 1
+
+  // Get interpolated point at progress t (0-1) for an effort
+  function getPointAt(effort: NormalisedEffort, t: number): EffortPoint {
+    const idx = Math.min(Math.floor(t * (effort.points.length - 1)), effort.points.length - 2)
+    const frac = t * (effort.points.length - 1) - idx
+    const a = effort.points[idx]
+    const b = effort.points[idx + 1]
+    return {
+      distancePct: a.distancePct + (b.distancePct - a.distancePct) * frac,
+      heartRate: a.heartRate != null && b.heartRate != null ? a.heartRate + (b.heartRate - a.heartRate) * frac : null,
+      speedKph: a.speedKph + (b.speedKph - a.speedKph) * frac,
+      powerWatts: a.powerWatts != null && b.powerWatts != null ? a.powerWatts + (b.powerWatts - a.powerWatts) * frac : null,
+      elevationMetres: a.elevationMetres + (b.elevationMetres - a.elevationMetres) * frac,
+      elevationGainMetres: a.elevationGainMetres + (b.elevationGainMetres - a.elevationGainMetres) * frac,
+    }
+  }
+
+  // Running average speed up to progress t
+  function avgSpeedAt(effort: NormalisedEffort, t: number): number {
+    const endIdx = Math.floor(t * (effort.points.length - 1))
+    const slice = effort.points.slice(0, endIdx + 1)
+    if (slice.length === 0) return 0
+    return slice.reduce((s, p) => s + p.speedKph, 0) / slice.length
+  }
+
+  const drawFrame = useCallback((t: number) => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    const W = canvas.width
+    const H = canvas.height
+    const PAD = { top: 20, right: 20, bottom: 80, left: 20 }
+    const chartW = W - PAD.left - PAD.right
+    const chartH = H - PAD.top - PAD.bottom
+
+    // Background
+    ctx.fillStyle = '#0a0a0a'
+    ctx.fillRect(0, 0, W, H)
+
+    // Orange left accent
+    ctx.fillStyle = '#FC4C02'
+    ctx.fillRect(0, 0, 3, H)
+
+    // Elevation profile fill
+    const elevPts = effortA.points.map((p, i) => ({
+      x: PAD.left + (i / (effortA.points.length - 1)) * chartW,
+      y: PAD.top + chartH - ((p.elevationMetres - minElev) / elevRange) * chartH,
+    }))
+
+    // Gradient fill
+    const grad = ctx.createLinearGradient(0, PAD.top, 0, PAD.top + chartH)
+    grad.addColorStop(0, 'rgba(252,76,2,0.25)')
+    grad.addColorStop(1, 'rgba(252,76,2,0.03)')
+    ctx.beginPath()
+    ctx.moveTo(elevPts[0].x, PAD.top + chartH)
+    elevPts.forEach(p => ctx.lineTo(p.x, p.y))
+    ctx.lineTo(elevPts[elevPts.length - 1].x, PAD.top + chartH)
+    ctx.closePath()
+    ctx.fillStyle = grad
+    ctx.fill()
+
+    // Elevation line
+    ctx.beginPath()
+    elevPts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y))
+    ctx.strokeStyle = '#FC4C02'
+    ctx.lineWidth = 2
+    ctx.lineJoin = 'round'
+    ctx.stroke()
+
+    // Progress tA = global t for effort A
+    // tB = scaled so effort B finishes proportionally later/earlier
+    const tA = Math.min(t, 1)
+    const ratioB = effortB ? effortB.elapsedSeconds / effortA.elapsedSeconds : 1
+    const tB = effortB ? Math.min(t / ratioB, 1) : 1
+
+    // Trailing line for A
+    const trailAEnd = Math.floor(tA * (effortA.points.length - 1))
+    if (trailAEnd > 0) {
+      ctx.beginPath()
+      for (let i = 0; i <= trailAEnd; i++) {
+        const p = effortA.points[i]
+        const x = PAD.left + p.distancePct * chartW
+        const y = PAD.top + chartH - ((p.elevationMetres - minElev) / elevRange) * chartH
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)
+      }
+      ctx.strokeStyle = 'rgba(96,165,250,0.5)'
+      ctx.lineWidth = 3
+      ctx.lineJoin = 'round'
+      ctx.stroke()
+    }
+
+    // Trailing line for B
+    if (effortB) {
+      const trailBEnd = Math.floor(tB * (effortB.points.length - 1))
+      if (trailBEnd > 0) {
+        ctx.beginPath()
+        for (let i = 0; i <= trailBEnd; i++) {
+          const p = effortB.points[i]
+          const x = PAD.left + p.distancePct * chartW
+          const elevY = PAD.top + chartH - ((p.elevationMetres - minElev) / elevRange) * chartH
+          i === 0 ? ctx.moveTo(x, elevY) : ctx.lineTo(x, elevY)
+        }
+        ctx.strokeStyle = 'rgba(252,76,2,0.5)'
+        ctx.lineWidth = 3
+        ctx.lineJoin = 'round'
+        ctx.stroke()
+      }
+    }
+
+    // Dot A
+    const ptA = getPointAt(effortA, tA)
+    const dotAx = PAD.left + ptA.distancePct * chartW
+    const dotAy = PAD.top + chartH - ((ptA.elevationMetres - minElev) / elevRange) * chartH
+
+    // Glow
+    const glowA = ctx.createRadialGradient(dotAx, dotAy, 0, dotAx, dotAy, 14)
+    glowA.addColorStop(0, 'rgba(96,165,250,0.4)')
+    glowA.addColorStop(1, 'rgba(96,165,250,0)')
+    ctx.fillStyle = glowA
+    ctx.beginPath()
+    ctx.arc(dotAx, dotAy, 14, 0, Math.PI * 2)
+    ctx.fill()
+
+    // Dot
+    ctx.fillStyle = '#60A5FA'
+    ctx.beginPath()
+    ctx.arc(dotAx, dotAy, 6, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = 2
+    ctx.stroke()
+
+    // Label A
+    ctx.fillStyle = '#60A5FA'
+    ctx.font = 'bold 11px -apple-system, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillText('A', dotAx, dotAy - 14)
+
+    // Dot B
+    if (effortB) {
+      const ptB = getPointAt(effortB, tB)
+      const dotBx = PAD.left + ptB.distancePct * chartW
+      const dotBy = PAD.top + chartH - ((ptB.elevationMetres - minElev) / elevRange) * chartH
+
+      const glowB = ctx.createRadialGradient(dotBx, dotBy, 0, dotBx, dotBy, 14)
+      glowB.addColorStop(0, 'rgba(252,76,2,0.4)')
+      glowB.addColorStop(1, 'rgba(252,76,2,0)')
+      ctx.fillStyle = glowB
+      ctx.beginPath()
+      ctx.arc(dotBx, dotBy, 14, 0, Math.PI * 2)
+      ctx.fill()
+
+      ctx.fillStyle = '#FC4C02'
+      ctx.beginPath()
+      ctx.arc(dotBx, dotBy, 6, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = 2
+      ctx.stroke()
+
+      ctx.fillStyle = '#FC4C02'
+      ctx.font = 'bold 11px -apple-system, sans-serif'
+      ctx.textAlign = 'center'
+      ctx.fillText('B', dotBx, dotBy - 14)
+    }
+
+    // Stats panel at bottom
+    const statsY = PAD.top + chartH + 12
+    const colW = W / (effortB ? 2 : 1)
+
+    // Effort A stats
+    const curSpeedA = ptA.speedKph
+    const avgSpeedA = avgSpeedAt(effortA, tA)
+    const curPowerA = ptA.powerWatts
+
+    ctx.fillStyle = '#60A5FA'
+    ctx.font = 'bold 10px -apple-system, sans-serif'
+    ctx.textAlign = 'left'
+    ctx.fillText('EFFORT A', PAD.left, statsY + 12)
+
+    ctx.fillStyle = '#ffffff'
+    ctx.font = 'bold 18px -apple-system, sans-serif'
+    ctx.fillText(`${curSpeedA.toFixed(1)} km/h`, PAD.left, statsY + 32)
+
+    ctx.fillStyle = '#888888'
+    ctx.font = '10px -apple-system, sans-serif'
+    ctx.fillText(`avg ${avgSpeedA.toFixed(1)} km/h`, PAD.left, statsY + 46)
+
+    if (curPowerA != null) {
+      ctx.fillStyle = '#EAB308'
+      ctx.font = '10px -apple-system, sans-serif'
+      ctx.fillText(`${Math.round(curPowerA)}W${!summaryA.device_watts ? ' est.' : ''}`, PAD.left, statsY + 60)
+    }
+
+    // Effort B stats
+    if (effortB && summaryB) {
+      const ptB2 = getPointAt(effortB, tB)
+      const curSpeedB = ptB2.speedKph
+      const avgSpeedB = avgSpeedAt(effortB, tB)
+      const curPowerB = ptB2.powerWatts
+
+      ctx.fillStyle = '#FC4C02'
+      ctx.font = 'bold 10px -apple-system, sans-serif'
+      ctx.textAlign = 'left'
+      ctx.fillText('EFFORT B', colW + PAD.left, statsY + 12)
+
+      ctx.fillStyle = '#ffffff'
+      ctx.font = 'bold 18px -apple-system, sans-serif'
+      ctx.fillText(`${curSpeedB.toFixed(1)} km/h`, colW + PAD.left, statsY + 32)
+
+      ctx.fillStyle = '#888888'
+      ctx.font = '10px -apple-system, sans-serif'
+      ctx.fillText(`avg ${avgSpeedB.toFixed(1)} km/h`, colW + PAD.left, statsY + 46)
+
+      if (curPowerB != null) {
+        ctx.fillStyle = '#EAB308'
+        ctx.font = '10px -apple-system, sans-serif'
+        ctx.fillText(`${Math.round(curPowerB)}W${!summaryB.device_watts ? ' est.' : ''}`, colW + PAD.left, statsY + 60)
+      }
+
+      // Divider
+      ctx.strokeStyle = '#1e1e1e'
+      ctx.lineWidth = 1
+      ctx.beginPath()
+      ctx.moveTo(colW, statsY)
+      ctx.lineTo(colW, H - 4)
+      ctx.stroke()
+    }
+
+    // Segment name + branding
+    ctx.fillStyle = '#333333'
+    ctx.font = '10px -apple-system, sans-serif'
+    ctx.textAlign = 'right'
+    ctx.fillText('SEGMENTIQ', W - PAD.right, statsY + 12)
+
+    ctx.fillStyle = '#2a2a2a'
+    ctx.font = '9px -apple-system, sans-serif'
+    ctx.fillText(effortA.segment.name, W - PAD.right, statsY + 24)
+
+  }, [effortA, effortB, summaryA, summaryB, minElev, maxElev, elevRange])
+  // Animation loop
   const animate = useCallback((duration: number, onComplete?: () => void) => {
     const start = performance.now() - pausedAtRef.current * duration
     startTimeRef.current = start
