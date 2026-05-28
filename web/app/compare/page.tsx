@@ -182,7 +182,7 @@ function CompareContent() {
   const timeDelta = deltas.totalTimeDeltaSeconds
 
   return (
-    <main className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background">
 
       <div className="border-b border-border px-4 py-4 flex items-center gap-3">
         <button
@@ -345,4 +345,54 @@ function CompareContent() {
             <div className="relative h-24">
               <svg width="100%" height="100%" viewBox="0 0 200 60" preserveAspectRatio="none">
                 <polyline
-                  points={effortA.
+                  points={effortA.points
+                    .filter((_: any, i: number) => i % 4 === 0)
+                    .map((p: any, i: number) =>
+                      `${i * (200 / 50)},${60 - ((p.heartRate ?? 0) / 200) * 60}`)
+                    .join(' ')}
+                  fill="none"
+                  stroke="#60A5FA"
+                  strokeWidth="1.5"
+                />
+                <polyline
+                  points={effortB.points
+                    .filter((_: any, i: number) => i % 4 === 0)
+                    .map((p: any, i: number) =>
+                      `${i * (200 / 50)},${60 - ((p.heartRate ?? 0) / 200) * 60}`)
+                    .join(' ')}
+                  fill="none"
+                  stroke="#FC4C02"
+                  strokeWidth="1.5"
+                  strokeDasharray="4 2"
+                />
+              </svg>
+            </div>
+            <div className="flex items-center gap-4 mt-2">
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-0.5 bg-blue-400" />
+                <span className="text-text-muted text-xs">Effort A</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-0.5 bg-strava" />
+                <span className="text-text-muted text-xs">Effort B</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+      </div>
+    </div>
+  )
+}
+
+export default function ComparePage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-text-muted text-sm">Loading comparison...</div>
+      </div>
+    }>
+      <CompareContent />
+    </Suspense>
+  )
+}
