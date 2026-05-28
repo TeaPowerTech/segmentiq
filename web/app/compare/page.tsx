@@ -184,7 +184,6 @@ function CompareContent() {
   return (
     <main className="min-h-screen bg-background">
 
-      {/* Header */}
       <div className="border-b border-border px-4 py-4 flex items-center gap-3">
         <button
           onClick={() => router.back()}
@@ -200,7 +199,6 @@ function CompareContent() {
 
       <div className="max-w-2xl mx-auto px-4 py-6">
 
-        {/* Effort headers */}
         <div className="grid grid-cols-2 gap-3 mb-6">
           <div className="bg-surface border-t-2 border-blue-400 border-x border-b border-border rounded-2xl p-4">
             <div className="text-blue-400 text-xs font-medium mb-1">Effort A</div>
@@ -232,7 +230,6 @@ function CompareContent() {
           </div>
         </div>
 
-        {/* Time delta banner */}
         <div className={`rounded-2xl p-4 mb-6 text-center border ${
           timeDelta < 0
             ? 'bg-green-500/10 border-green-500/20'
@@ -256,7 +253,6 @@ function CompareContent() {
           </div>
         </div>
 
-        {/* Metrics comparison */}
         <div className="bg-surface border border-border rounded-2xl px-4 mb-6">
           <div className="grid grid-cols-3 items-center py-2 border-b border-border">
             <div className="text-blue-400 text-xs font-medium">A</div>
@@ -301,7 +297,6 @@ function CompareContent() {
           )}
         </div>
 
-        {/* Speed chart */}
         {effortA.points?.length > 0 && effortB.points?.length > 0 && (
           <div className="bg-surface border border-border rounded-2xl p-4 mb-6">
             <div className="text-xs text-text-muted mb-3">Speed across segment</div>
@@ -343,4 +338,11 @@ function CompareContent() {
           </div>
         )}
 
-        {/* HR char
+        {effortA.averageHeartRate != null && effortB.averageHeartRate != null &&
+         effortA.points?.length > 0 && effortB.points?.length > 0 && (
+          <div className="bg-surface border border-border rounded-2xl p-4 mb-6">
+            <div className="text-xs text-text-muted mb-3">Heart rate across segment</div>
+            <div className="relative h-24">
+              <svg width="100%" height="100%" viewBox="0 0 200 60" preserveAspectRatio="none">
+                <polyline
+                  points={effortA.
