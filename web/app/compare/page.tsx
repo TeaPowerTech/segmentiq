@@ -372,7 +372,7 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
     ctx.fillText(eA.segment.name, W - PAD.right, statsY + 24)
 
   }, [])
-  const animate = useCallback((duration: number, startProgress: number, onComplete?: () => void) => {
+const animate = useCallback((duration: number, startProgress: number, onComplete?: () => void) => {
     const startTime = performance.now()
     const startT = startProgress
 
