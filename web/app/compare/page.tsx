@@ -32,7 +32,6 @@ interface NormalisedEffort {
   averageSpeedKph: number | null
   prRank: number | null
   hasPower: boolean
-  device_watts?: boolean
   points: EffortPoint[]
   segment: {
     name: string
@@ -102,11 +101,10 @@ function MetricRow({ label, valueA, valueB, delta, unit, invert = false }: {
   )
 }
 
-function ScaledChart({ pointsA, pointsB, getValue, maxVal }: {
+function ScaledChart({ pointsA, pointsB, getValue }: {
   pointsA: EffortPoint[]
   pointsB: EffortPoint[]
   getValue: (p: EffortPoint) => number | null
-  maxVal?: number
 }) {
   const valsA = pointsA.map(getValue).filter((v): v is number => v != null)
   const valsB = pointsB.map(getValue).filter((v): v is number => v != null)
@@ -114,38 +112,25 @@ function ScaledChart({ pointsA, pointsB, getValue, maxVal }: {
   if (allVals.length === 0) return null
 
   const min = Math.min(...allVals)
-  const max = maxVal ?? Math.max(...allVals)
+  const max = Math.max(...allVals)
   const range = max - min || 1
   const pad = 4
-
   const toY = (v: number) => 60 - pad - ((v - min) / range) * (60 - pad * 2)
 
   const lineA = pointsA
     .filter((_, i) => i % 4 === 0)
-    .map((p, i) => {
-      const v = getValue(p)
-      return v != null ? `${i * (200 / 50)},${toY(v)}` : null
-    })
-    .filter(Boolean)
-    .join(' ')
+    .map((p, i) => { const v = getValue(p); return v != null ? `${i * (200 / 50)},${toY(v)}` : null })
+    .filter(Boolean).join(' ')
 
   const lineB = pointsB
     .filter((_, i) => i % 4 === 0)
-    .map((p, i) => {
-      const v = getValue(p)
-      return v != null ? `${i * (200 / 50)},${toY(v)}` : null
-    })
-    .filter(Boolean)
-    .join(' ')
+    .map((p, i) => { const v = getValue(p); return v != null ? `${i * (200 / 50)},${toY(v)}` : null })
+    .filter(Boolean).join(' ')
 
   return (
     <svg width="100%" height="100%" viewBox="0 0 200 60" preserveAspectRatio="none">
-      {lineA && (
-        <polyline points={lineA} fill="none" stroke="#60A5FA" strokeWidth="1.5" />
-      )}
-      {lineB && (
-        <polyline points={lineB} fill="none" stroke="#FC4C02" strokeWidth="1.5" strokeDasharray="4 2" />
-      )}
+      {lineA && <polyline points={lineA} fill="none" stroke="#60A5FA" strokeWidth="1.5" />}
+      {lineB && <polyline points={lineB} fill="none" stroke="#FC4C02" strokeWidth="1.5" strokeDasharray="4 2" />}
     </svg>
   )
 }
@@ -161,8 +146,9 @@ function drawExportCard(
   const ctx = canvas.getContext('2d')
   if (!ctx) return
 
-  const W = 390
-  const H = 640
+  const W = 390, H = 680
+  canvas.height = H
+
   const BG = '#0a0a0a'
   const SURFACE = '#111111'
   const BORDER = '#1e1e1e'
@@ -205,44 +191,220 @@ function drawExportCard(
 
   // Header
   ctx.fillStyle = SURFACE
-  ctx.fillRect(0, 0, W, 56)
+  ctx.fillRect(0, 0, W, 58)
   ctx.strokeStyle = BORDER
   ctx.lineWidth = 1
   ctx.beginPath()
-  ctx.moveTo(0, 56)
-  ctx.lineTo(W, 56)
+  ctx.moveTo(0, 58)
+  ctx.lineTo(W, 58)
   ctx.stroke()
 
-  ctx.fillStyle = WHITE
-  ctx.font = '500 15px -apple-system, sans-serif'
+  ctx.fillStyle = MUTED
+  ctx.font = '400 11px -apple-system, sans-serif'
   ctx.textAlign = 'left'
-  ctx.fillText(`${effortA.segment.name}`, 20, 34)
+  ctx.fillText(effortA.segment.name.toUpperCase(), 20, 26)
+
+  ctx.fillStyle = WHITE
+  ctx.font = '600 14px -apple-system, sans-serif'
+  ctx.fillText(`${(effortA.segment.distanceMetres >= 1000 ? (effortA.segment.distanceMetres / 1000).toFixed(1) + 'km' : Math.round(effortA.segment.distanceMetres) + 'm')} · ${effortA.segment.averageGradePct}% avg grade`, 20, 44)
+
+  ctx.fillStyle = DIM
+  ctx.font = '600 11px -apple-system, sans-serif'
+  ctx.textAlign = 'right'
+  ctx.fillText('SEGMENTIQ', W - 20, 35)
+
+  // Times row
+  const timesY = 58
+  const halfW = W / 2
+
+  ctx.strokeStyle = BORDER
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.moveTo(halfW, timesY)
+  ctx.lineTo(halfW, timesY + 110)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.moveTo(0, timesY + 110)
+  ctx.lineTo(W, timesY + 110)
+  ctx.stroke()
+
+  // Effort A
+  ctx.fillStyle = BLUE
+  ctx.font = '500 10px -apple-system, sans-serif'
+  ctx.textAlign = 'left'
+  ctx.fillText('EFFORT A', 20, timesY + 22)
+
+  ctx.fillStyle = BLUE
+  ctx.font = '700 38px -apple-system, sans-serif'
+  ctx.fillText(formatTime(effortA.elapsedSeconds), 20, timesY + 62)
 
   ctx.fillStyle = DIM
   ctx.font = '400 11px -apple-system, sans-serif'
-  ctx.textAlign = 'right'
-  ctx.fillText('SegmentIQ', W - 20, 34)
+  ctx.fillText(formatDate(effortA.startDate), 20, timesY + 80)
 
-  // Delta hero
+  if (effortA.prRank === 1) {
+    roundRect(20, timesY + 88, 28, 16, 8)
+    ctx.fillStyle = 'rgba(234,179,8,0.15)'
+    ctx.fill()
+    roundRect(20, timesY + 88, 28, 16, 8)
+    ctx.strokeStyle = 'rgba(234,179,8,0.3)'
+    ctx.lineWidth = 1
+    ctx.stroke()
+    ctx.fillStyle = GOLD
+    ctx.font = '600 9px -apple-system, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillText('PR', 34, timesY + 100)
+  }
+
+  // Delta in centre
   const deltaColour = timeDelta < 0 ? GREEN : timeDelta > 0 ? RED : WHITE
-  const deltaText = timeDelta === 0 ? 'Dead heat' : `${timeDelta < 0 ? '▲' : '▼'} ${Math.abs(timeDelta)}s`
+  const deltaText = timeDelta === 0 ? '0s' : `${timeDelta < 0 ? '▲' : '▼'} ${Math.abs(timeDelta)}s`
   ctx.fillStyle = deltaColour
-  ctx.font = '700 44px -apple-system, sans-serif'
+  ctx.font = '700 20px -apple-system, sans-serif'
   ctx.textAlign = 'center'
-  ctx.fillText(deltaText, W / 2, 116)
+  ctx.fillText(deltaText, halfW, timesY + 55)
+  ctx.fillStyle = DIM
+  ctx.font = '400 10px -apple-system, sans-serif'
+  ctx.fillText(timeDelta < 0 ? 'A faster' : timeDelta > 0 ? 'B faster' : 'dead heat', halfW, timesY + 70)
 
-  ctx.fillStyle = MUTED
-  ctx.font = '400 12px -apple-system, sans-serif'
-  ctx.fillText(
-    timeDelta < 0 ? 'Effort A was faster' : timeDelta > 0 ? 'Effort B was faster' : 'Both efforts equal',
-    W / 2, 136
+  // Effort B
+  ctx.fillStyle = ORANGE
+  ctx.font = '500 10px -apple-system, sans-serif'
+  ctx.textAlign = 'left'
+  ctx.fillText('EFFORT B', halfW + 20, timesY + 22)
+
+  ctx.fillStyle = ORANGE
+  ctx.font = '700 38px -apple-system, sans-serif'
+  ctx.fillText(formatTime(effortB.elapsedSeconds), halfW + 20, timesY + 62)
+
+  ctx.fillStyle = DIM
+  ctx.font = '400 11px -apple-system, sans-serif'
+  ctx.fillText(formatDate(effortB.startDate), halfW + 20, timesY + 80)
+
+  if (effortB.prRank === 1) {
+    roundRect(halfW + 20, timesY + 88, 28, 16, 8)
+    ctx.fillStyle = 'rgba(234,179,8,0.15)'
+    ctx.fill()
+    roundRect(halfW + 20, timesY + 88, 28, 16, 8)
+    ctx.strokeStyle = 'rgba(234,179,8,0.3)'
+    ctx.lineWidth = 1
+    ctx.stroke()
+    ctx.fillStyle = GOLD
+    ctx.font = '600 9px -apple-system, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillText('PR', halfW + 34, timesY + 100)
+  }
+
+  // Metrics section
+  const metY = timesY + 110
+  const barW = W - 40
+  const barH = 5
+  const barMid = W / 2
+
+  ctx.fillStyle = DIM
+  ctx.font = '400 10px -apple-system, sans-serif'
+  ctx.textAlign = 'left'
+  ctx.fillText('METRICS', 20, metY + 20)
+
+  let mY = metY + 34
+
+  function drawStatBar(
+    label: string,
+    valA: number | null,
+    valB: number | null,
+    formatA: string,
+    formatB: string,
+  ) {
+    if (valA == null && valB == null) return
+
+    ctx.fillStyle = BLUE
+    ctx.font = '500 12px -apple-system, sans-serif'
+    ctx.textAlign = 'left'
+    ctx.fillText(valA != null ? formatA : '—', 20, mY)
+
+    ctx.fillStyle = DIM
+    ctx.font = '400 10px -apple-system, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillText(label, barMid, mY)
+
+    ctx.fillStyle = ORANGE
+    ctx.font = '500 12px -apple-system, sans-serif'
+    ctx.textAlign = 'right'
+    ctx.fillText(valB != null ? formatB : '—', W - 20, mY)
+
+    // Bar track
+    ctx.fillStyle = BORDER
+    roundRect(20, mY + 5, barW, barH, 3)
+    ctx.fill()
+
+    // Calculate bar widths proportionally
+    const maxVal = Math.max(valA ?? 0, valB ?? 0)
+    const halfBar = barW / 2 - 2
+
+    if (valA != null && maxVal > 0) {
+      const wA = (valA / maxVal) * halfBar
+      ctx.fillStyle = BLUE
+      roundRect(barMid - wA - 2, mY + 5, wA, barH, 2)
+      ctx.fill()
+    }
+
+    if (valB != null && maxVal > 0) {
+      const wB = (valB / maxVal) * halfBar
+      ctx.fillStyle = ORANGE
+      roundRect(barMid + 2, mY + 5, wB, barH, 2)
+      ctx.fill()
+    }
+
+    mY += 32
+  }
+
+  drawStatBar(
+    'AVG HR',
+    effortA.averageHeartRate,
+    effortB.averageHeartRate,
+    effortA.averageHeartRate != null ? `${Math.round(effortA.averageHeartRate)} bpm` : '—',
+    effortB.averageHeartRate != null ? `${Math.round(effortB.averageHeartRate)} bpm` : '—',
   )
 
-  // Elevation profile
-  const elY = 154
-  const elH = 88
+  drawStatBar(
+    'AVG SPEED',
+    effortA.averageSpeedKph,
+    effortB.averageSpeedKph,
+    effortA.averageSpeedKph != null ? `${effortA.averageSpeedKph.toFixed(1)} km/h` : '—',
+    effortB.averageSpeedKph != null ? `${effortB.averageSpeedKph.toFixed(1)} km/h` : '—',
+  )
+
+  const powerA = effortA.averagePowerWatts
+  const powerB = effortB.averagePowerWatts
+  if (powerA != null || powerB != null) {
+    drawStatBar(
+      'AVG POWER',
+      powerA,
+      powerB,
+      powerA != null ? `${Math.round(powerA)}W${!summaryA.device_watts ? ' est.' : ''}` : '—',
+      powerB != null ? `${Math.round(powerB)}W${!summaryB.device_watts ? ' est.' : ''}` : '—',
+    )
+  }
+
+  // Divider
+  const divY = mY + 4
+  ctx.strokeStyle = BORDER
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.moveTo(0, divY)
+  ctx.lineTo(W, divY)
+  ctx.stroke()
+
+  // Elevation profile — 80px tall
+  const elY = divY + 14
+  const elH = 80
   const elPad = 20
   const elW = W - elPad * 2
+
+  ctx.fillStyle = DIM
+  ctx.font = '400 10px -apple-system, sans-serif'
+  ctx.textAlign = 'left'
+  ctx.fillText('ELEVATION PROFILE', elPad, elY - 4)
 
   const elevPoints = effortA.points.map(p => p.elevationMetres)
   const minEl = Math.min(...elevPoints)
@@ -251,7 +413,7 @@ function drawExportCard(
 
   const pts = elevPoints.map((v, i) => ({
     x: elPad + (i / (elevPoints.length - 1)) * elW,
-    y: elY + elH - 8 - ((v - minEl) / elRange) * (elH - 20),
+    y: elY + elH - 4 - ((v - minEl) / elRange) * (elH - 14),
   }))
 
   // Fill
@@ -261,8 +423,8 @@ function drawExportCard(
   ctx.lineTo(pts[pts.length - 1].x, elY + elH)
   ctx.closePath()
   const grad = ctx.createLinearGradient(0, elY, 0, elY + elH)
-  grad.addColorStop(0, 'rgba(252, 76, 2, 0.3)')
-  grad.addColorStop(1, 'rgba(252, 76, 2, 0)')
+  grad.addColorStop(0, 'rgba(252,76,2,0.35)')
+  grad.addColorStop(1, 'rgba(252,76,2,0.05)')
   ctx.fillStyle = grad
   ctx.fill()
 
@@ -283,172 +445,24 @@ function drawExportCard(
   ctx.lineTo(W - elPad, elY + elH)
   ctx.stroke()
 
-  ctx.fillStyle = DIM
-  ctx.font = '400 10px -apple-system, sans-serif'
-  ctx.textAlign = 'left'
-  ctx.fillText('Elevation profile', elPad, elY - 5)
-
-  // Divider
-  const div1Y = elY + elH + 14
-  ctx.strokeStyle = BORDER
-  ctx.lineWidth = 1
-  ctx.beginPath()
-  ctx.moveTo(0, div1Y)
-  ctx.lineTo(W, div1Y)
-  ctx.stroke()
-
-  // Efforts side by side
-  const efY = div1Y + 18
-  const halfW = W / 2
-
-  ctx.strokeStyle = BORDER
-  ctx.lineWidth = 1
-  ctx.beginPath()
-  ctx.moveTo(halfW, div1Y)
-  ctx.lineTo(halfW, div1Y + 120)
-  ctx.stroke()
-
-  // Effort A
-  ctx.fillStyle = BLUE
-  ctx.font = '500 10px -apple-system, sans-serif'
-  ctx.textAlign = 'left'
-  ctx.fillText('EFFORT A', 20, efY)
-
-  ctx.fillStyle = BLUE
-  ctx.font = '700 34px -apple-system, sans-serif'
-  ctx.fillText(formatTime(effortA.elapsedSeconds), 20, efY + 36)
-
-  ctx.fillStyle = DIM
-  ctx.font = '400 11px -apple-system, sans-serif'
-  ctx.fillText(formatDate(effortA.startDate), 20, efY + 54)
-
-  if (effortA.prRank === 1) {
-    roundRect(20, efY + 62, 28, 16, 8)
-    ctx.fillStyle = 'rgba(234,179,8,0.15)'
-    ctx.fill()
-    roundRect(20, efY + 62, 28, 16, 8)
-    ctx.strokeStyle = 'rgba(234,179,8,0.3)'
-    ctx.lineWidth = 1
-    ctx.stroke()
-    ctx.fillStyle = GOLD
-    ctx.font = '600 9px -apple-system, sans-serif'
-    ctx.textAlign = 'center'
-    ctx.fillText('PR', 34, efY + 74)
-  }
-
-  // Effort B
-  ctx.fillStyle = ORANGE
-  ctx.font = '500 10px -apple-system, sans-serif'
-  ctx.textAlign = 'left'
-  ctx.fillText('EFFORT B', halfW + 20, efY)
-
-  ctx.fillStyle = ORANGE
-  ctx.font = '700 34px -apple-system, sans-serif'
-  ctx.fillText(formatTime(effortB.elapsedSeconds), halfW + 20, efY + 36)
-
-  ctx.fillStyle = DIM
-  ctx.font = '400 11px -apple-system, sans-serif'
-  ctx.fillText(formatDate(effortB.startDate), halfW + 20, efY + 54)
-
-  if (effortB.prRank === 1) {
-    roundRect(halfW + 20, efY + 62, 28, 16, 8)
-    ctx.fillStyle = 'rgba(234,179,8,0.15)'
-    ctx.fill()
-    roundRect(halfW + 20, efY + 62, 28, 16, 8)
-    ctx.strokeStyle = 'rgba(234,179,8,0.3)'
-    ctx.lineWidth = 1
-    ctx.stroke()
-    ctx.fillStyle = GOLD
-    ctx.font = '600 9px -apple-system, sans-serif'
-    ctx.textAlign = 'center'
-    ctx.fillText('PR', halfW + 34, efY + 74)
-  }
-
-  // Divider
-  const div2Y = div1Y + 120
-  ctx.strokeStyle = BORDER
-  ctx.lineWidth = 1
-  ctx.beginPath()
-  ctx.moveTo(0, div2Y)
-  ctx.lineTo(W, div2Y)
-  ctx.stroke()
-
-  // Metrics
-  const metY = div2Y + 18
-  const colW = W / 3
-
-  const hasPowerA = summaryA.device_watts && effortA.averagePowerWatts != null
-  const hasPowerB = summaryB.device_watts && effortB.averagePowerWatts != null
-  const powerA = effortA.averagePowerWatts != null
-    ? `${Math.round(effortA.averagePowerWatts)}W${!summaryA.device_watts ? ' est.' : ''}`
-    : '—'
-  const powerB = effortB.averagePowerWatts != null
-    ? `${Math.round(effortB.averagePowerWatts)}W${!summaryB.device_watts ? ' est.' : ''}`
-    : '—'
-
-  const metrics = [
-    {
-      label: 'AVG HR',
-      a: effortA.averageHeartRate != null ? `${Math.round(effortA.averageHeartRate)} bpm` : '—',
-      b: effortB.averageHeartRate != null ? `${Math.round(effortB.averageHeartRate)} bpm` : '—',
-    },
-    { label: 'POWER', a: powerA, b: powerB },
-    {
-      label: 'DISTANCE',
-      a: effortA.segment.distanceMetres >= 1000
-        ? `${(effortA.segment.distanceMetres / 1000).toFixed(1)}km`
-        : `${Math.round(effortA.segment.distanceMetres)}m`,
-      b: null,
-    },
-  ]
-
-  metrics.forEach((m, i) => {
-    const cx = colW * i + colW / 2
-
-    ctx.fillStyle = DIM
-    ctx.font = '400 10px -apple-system, sans-serif'
-    ctx.textAlign = 'center'
-    ctx.fillText(m.label, cx, metY)
-
-    ctx.fillStyle = BLUE
-    ctx.font = '500 12px -apple-system, sans-serif'
-    ctx.fillText(m.a, cx, metY + 18)
-
-    if (m.b) {
-      ctx.fillStyle = ORANGE
-      ctx.font = '500 12px -apple-system, sans-serif'
-      ctx.fillText(m.b, cx, metY + 34)
-    }
-
-    if (i < 2) {
-      ctx.strokeStyle = BORDER
-      ctx.lineWidth = 1
-      ctx.beginPath()
-      ctx.moveTo(colW * (i + 1), div2Y)
-      ctx.lineTo(colW * (i + 1), div2Y + 68)
-      ctx.stroke()
-    }
-  })
-
-  // Divider
-  const div3Y = div2Y + 68
-  ctx.strokeStyle = BORDER
-  ctx.lineWidth = 1
-  ctx.beginPath()
-  ctx.moveTo(0, div3Y)
-  ctx.lineTo(W, div3Y)
-  ctx.stroke()
-
   // Footer
+  const footY = elY + elH + 14
+  ctx.strokeStyle = BORDER
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.moveTo(0, footY)
+  ctx.lineTo(W, footY)
+  ctx.stroke()
+
   ctx.fillStyle = DIMMER
   ctx.font = '600 11px -apple-system, sans-serif'
   ctx.textAlign = 'left'
-  ctx.fillText('SEGMENTIQ', 20, div3Y + 24)
+  ctx.fillText('SEGMENTIQ', 20, footY + 22)
 
   ctx.fillStyle = DIMMER
   ctx.font = '400 10px -apple-system, sans-serif'
   ctx.textAlign = 'right'
-  ctx.fillText('segmentiq.vercel.app', W - 20, div3Y + 24)
+  ctx.fillText('segmentiq.vercel.app', W - 20, footY + 22)
 }
 
 function CompareContent() {
@@ -549,11 +563,8 @@ function CompareContent() {
   return (
     <div className="min-h-screen bg-background">
 
-      {/* Header */}
       <div className="border-b border-border px-4 py-4 flex items-center gap-3">
-        <button onClick={() => router.back()} className="text-text-secondary hover:text-white transition-colors text-lg">
-          ←
-        </button>
+        <button onClick={() => router.back()} className="text-text-secondary hover:text-white transition-colors text-lg">←</button>
         <div>
           <h1 className="font-semibold text-sm">{effortA.segment.name}</h1>
           <p className="text-text-muted text-xs">Effort comparison</p>
@@ -562,7 +573,7 @@ function CompareContent() {
 
       <div className="max-w-2xl mx-auto px-4 py-6">
 
-        {/* Effort headers — neutral borders, colour in labels only */}
+        {/* Effort cards — neutral borders */}
         <div className="grid grid-cols-2 gap-3 mb-6">
           <div className="bg-surface border border-border rounded-2xl p-4">
             <div className="text-blue-400 text-xs font-medium mb-1">Effort A</div>
@@ -582,7 +593,7 @@ function CompareContent() {
           </div>
         </div>
 
-        {/* Time delta banner */}
+        {/* Time delta */}
         <div className={`rounded-2xl p-4 mb-6 text-center border ${
           timeDelta < 0 ? 'bg-green-500/10 border-green-500/20' :
           timeDelta > 0 ? 'bg-red-500/10 border-red-500/20' :
@@ -638,51 +649,31 @@ function CompareContent() {
           )}
         </div>
 
-        {/* Speed chart — dynamic scaling */}
+        {/* Speed chart */}
         {effortA.points?.length > 0 && effortB.points?.length > 0 && (
           <div className="bg-surface border border-border rounded-2xl p-4 mb-6">
             <div className="text-xs text-text-muted mb-3">Speed across segment</div>
             <div className="relative h-24">
-              <ScaledChart
-                pointsA={effortA.points}
-                pointsB={effortB.points}
-                getValue={p => p.speedKph}
-              />
+              <ScaledChart pointsA={effortA.points} pointsB={effortB.points} getValue={p => p.speedKph} />
             </div>
             <div className="flex items-center gap-4 mt-2">
-              <div className="flex items-center gap-2">
-                <div className="w-4 h-0.5 bg-blue-400" />
-                <span className="text-text-muted text-xs">Effort A</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-4 h-0.5 bg-strava" />
-                <span className="text-text-muted text-xs">Effort B</span>
-              </div>
+              <div className="flex items-center gap-2"><div className="w-4 h-0.5 bg-blue-400" /><span className="text-text-muted text-xs">Effort A</span></div>
+              <div className="flex items-center gap-2"><div className="w-4 h-0.5 bg-strava" /><span className="text-text-muted text-xs">Effort B</span></div>
             </div>
           </div>
         )}
 
-        {/* HR chart — dynamic scaling */}
+        {/* HR chart */}
         {effortA.averageHeartRate != null && effortB.averageHeartRate != null &&
           effortA.points?.length > 0 && effortB.points?.length > 0 && (
           <div className="bg-surface border border-border rounded-2xl p-4 mb-6">
             <div className="text-xs text-text-muted mb-3">Heart rate across segment</div>
             <div className="relative h-24">
-              <ScaledChart
-                pointsA={effortA.points}
-                pointsB={effortB.points}
-                getValue={p => p.heartRate}
-              />
+              <ScaledChart pointsA={effortA.points} pointsB={effortB.points} getValue={p => p.heartRate} />
             </div>
             <div className="flex items-center gap-4 mt-2">
-              <div className="flex items-center gap-2">
-                <div className="w-4 h-0.5 bg-blue-400" />
-                <span className="text-text-muted text-xs">Effort A</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-4 h-0.5 bg-strava" />
-                <span className="text-text-muted text-xs">Effort B</span>
-              </div>
+              <div className="flex items-center gap-2"><div className="w-4 h-0.5 bg-blue-400" /><span className="text-text-muted text-xs">Effort A</span></div>
+              <div className="flex items-center gap-2"><div className="w-4 h-0.5 bg-strava" /><span className="text-text-muted text-xs">Effort B</span></div>
             </div>
           </div>
         )}
@@ -694,7 +685,7 @@ function CompareContent() {
             <canvas
               ref={canvasRef}
               width={390}
-              height={640}
+              height={680}
               style={{ borderRadius: '12px', maxWidth: '100%' }}
             />
             <button
@@ -707,8 +698,6 @@ function CompareContent() {
         )}
 
       </div>
-
-      {/* Hidden canvas not needed — using inline canvas above */}
     </div>
   )
 }
