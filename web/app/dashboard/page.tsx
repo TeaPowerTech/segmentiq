@@ -17,6 +17,7 @@ interface SegmentResult {
   segment: any
   efforts: Effort[]
   bestEffort: Effort
+  mostRecentDate: string
 }
 
 function formatTime(seconds: number): string {
@@ -94,7 +95,6 @@ function DashboardContent() {
           return
         }
 
-        // Fetch sequentially with delay to respect Strava rate limits
         const results: SegmentResult[] = []
         for (const segment of starred) {
           if (cancelled) break
@@ -120,12 +120,14 @@ function DashboardContent() {
                 segment,
                 efforts,
                 bestEffort: efforts[0],
+                mostRecentDate: efforts[efforts.length - 1].start_date,
               })
-              // Update incrementally so user sees segments appear
+              // Sort by most recently ridden after each addition
+              results.sort((a, b) =>
+                new Date(b.mostRecentDate).getTime() - new Date(a.mostRecentDate).getTime()
+              )
               if (!cancelled) setSegments([...results])
             }
-
-            // 200ms delay between requests to avoid rate limits
             await new Promise(resolve => setTimeout(resolve, 200))
           } catch {
             continue
@@ -161,7 +163,7 @@ function DashboardContent() {
         <div className="mb-6">
           <h1 className="text-xl font-semibold">Your Segments</h1>
           <p className="text-text-secondary text-sm mt-1">
-            Tap a segment to replay your efforts
+            Sorted by most recently ridden
           </p>
         </div>
 
