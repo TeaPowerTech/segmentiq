@@ -116,8 +116,6 @@ function ScaledChart({ pointsA, pointsB, getValue }: {
   )
 }
 
-// ─── Segment Replay Component ─────────────────────────────────────────────────
-
 interface SegmentReplayProps {
   effortA: NormalisedEffort
   effortB: NormalisedEffort | null
@@ -128,22 +126,20 @@ interface SegmentReplayProps {
 function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const animFrameRef = useRef<number>(0)
-  const startTimeRef = useRef<number>(0)
-  const pausedAtRef = useRef<number>(0)
+  const progressRef = useRef<number>(0)
   const [playing, setPlaying] = useState(false)
-  const [progress, setProgress] = useState(0) // 0–1
+  const [progress, setProgress] = useState(0)
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
 
-  const PREVIEW_DURATION = 15000 // 15s preview
-  const EXPORT_DURATION = 30000  // 30s export
+  const PREVIEW_DURATION = 15000
+  const EXPORT_DURATION = 30000
 
   const allElev = effortA.points.map(p => p.elevationMetres)
   const minElev = Math.min(...allElev)
   const maxElev = Math.max(...allElev)
   const elevRange = maxElev - minElev || 1
 
-  // Get interpolated point at progress t (0-1) for an effort
   function getPointAt(effort: NormalisedEffort, t: number): EffortPoint {
     const idx = Math.min(Math.floor(t * (effort.points.length - 1)), effort.points.length - 2)
     const frac = t * (effort.points.length - 1) - idx
@@ -151,15 +147,16 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
     const b = effort.points[idx + 1]
     return {
       distancePct: a.distancePct + (b.distancePct - a.distancePct) * frac,
-      heartRate: a.heartRate != null && b.heartRate != null ? a.heartRate + (b.heartRate - a.heartRate) * frac : null,
+      heartRate: a.heartRate != null && b.heartRate != null
+        ? a.heartRate + (b.heartRate - a.heartRate) * frac : null,
       speedKph: a.speedKph + (b.speedKph - a.speedKph) * frac,
-      powerWatts: a.powerWatts != null && b.powerWatts != null ? a.powerWatts + (b.powerWatts - a.powerWatts) * frac : null,
+      powerWatts: a.powerWatts != null && b.powerWatts != null
+        ? a.powerWatts + (b.powerWatts - a.powerWatts) * frac : null,
       elevationMetres: a.elevationMetres + (b.elevationMetres - a.elevationMetres) * frac,
       elevationGainMetres: a.elevationGainMetres + (b.elevationGainMetres - a.elevationGainMetres) * frac,
     }
   }
 
-  // Running average speed up to progress t
   function avgSpeedAt(effort: NormalisedEffort, t: number): number {
     const endIdx = Math.floor(t * (effort.points.length - 1))
     const slice = effort.points.slice(0, endIdx + 1)
@@ -179,21 +176,17 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
     const chartW = W - PAD.left - PAD.right
     const chartH = H - PAD.top - PAD.bottom
 
-    // Background
     ctx.fillStyle = '#0a0a0a'
     ctx.fillRect(0, 0, W, H)
 
-    // Orange left accent
     ctx.fillStyle = '#FC4C02'
     ctx.fillRect(0, 0, 3, H)
 
-    // Elevation profile fill
     const elevPts = effortA.points.map((p, i) => ({
       x: PAD.left + (i / (effortA.points.length - 1)) * chartW,
       y: PAD.top + chartH - ((p.elevationMetres - minElev) / elevRange) * chartH,
     }))
 
-    // Gradient fill
     const grad = ctx.createLinearGradient(0, PAD.top, 0, PAD.top + chartH)
     grad.addColorStop(0, 'rgba(252,76,2,0.25)')
     grad.addColorStop(1, 'rgba(252,76,2,0.03)')
@@ -205,7 +198,6 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
     ctx.fillStyle = grad
     ctx.fill()
 
-    // Elevation line
     ctx.beginPath()
     elevPts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y))
     ctx.strokeStyle = '#FC4C02'
@@ -213,13 +205,10 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
     ctx.lineJoin = 'round'
     ctx.stroke()
 
-    // Progress tA = global t for effort A
-    // tB = scaled so effort B finishes proportionally later/earlier
     const tA = Math.min(t, 1)
     const ratioB = effortB ? effortB.elapsedSeconds / effortA.elapsedSeconds : 1
     const tB = effortB ? Math.min(t / ratioB, 1) : 1
 
-    // Trailing line for A
     const trailAEnd = Math.floor(tA * (effortA.points.length - 1))
     if (trailAEnd > 0) {
       ctx.beginPath()
@@ -235,7 +224,6 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
       ctx.stroke()
     }
 
-    // Trailing line for B
     if (effortB) {
       const trailBEnd = Math.floor(tB * (effortB.points.length - 1))
       if (trailBEnd > 0) {
@@ -253,12 +241,10 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
       }
     }
 
-    // Dot A
     const ptA = getPointAt(effortA, tA)
     const dotAx = PAD.left + ptA.distancePct * chartW
     const dotAy = PAD.top + chartH - ((ptA.elevationMetres - minElev) / elevRange) * chartH
 
-    // Glow
     const glowA = ctx.createRadialGradient(dotAx, dotAy, 0, dotAx, dotAy, 14)
     glowA.addColorStop(0, 'rgba(96,165,250,0.4)')
     glowA.addColorStop(1, 'rgba(96,165,250,0)')
@@ -267,7 +253,6 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
     ctx.arc(dotAx, dotAy, 14, 0, Math.PI * 2)
     ctx.fill()
 
-    // Dot
     ctx.fillStyle = '#60A5FA'
     ctx.beginPath()
     ctx.arc(dotAx, dotAy, 6, 0, Math.PI * 2)
@@ -276,13 +261,11 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
     ctx.lineWidth = 2
     ctx.stroke()
 
-    // Label A
     ctx.fillStyle = '#60A5FA'
     ctx.font = 'bold 11px -apple-system, sans-serif'
     ctx.textAlign = 'center'
     ctx.fillText('A', dotAx, dotAy - 14)
 
-    // Dot B
     if (effortB) {
       const ptB = getPointAt(effortB, tB)
       const dotBx = PAD.left + ptB.distancePct * chartW
@@ -310,11 +293,9 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
       ctx.fillText('B', dotBx, dotBy - 14)
     }
 
-    // Stats panel at bottom
     const statsY = PAD.top + chartH + 12
     const colW = W / (effortB ? 2 : 1)
 
-    // Effort A stats
     const curSpeedA = ptA.speedKph
     const avgSpeedA = avgSpeedAt(effortA, tA)
     const curPowerA = ptA.powerWatts
@@ -338,7 +319,6 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
       ctx.fillText(`${Math.round(curPowerA)}W${!summaryA.device_watts ? ' est.' : ''}`, PAD.left, statsY + 60)
     }
 
-    // Effort B stats
     if (effortB && summaryB) {
       const ptB2 = getPointAt(effortB, tB)
       const curSpeedB = ptB2.speedKph
@@ -364,7 +344,6 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
         ctx.fillText(`${Math.round(curPowerB)}W${!summaryB.device_watts ? ' est.' : ''}`, colW + PAD.left, statsY + 60)
       }
 
-      // Divider
       ctx.strokeStyle = '#1e1e1e'
       ctx.lineWidth = 1
       ctx.beginPath()
@@ -373,7 +352,6 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
       ctx.stroke()
     }
 
-    // Segment name + branding
     ctx.fillStyle = '#333333'
     ctx.font = '10px -apple-system, sans-serif'
     ctx.textAlign = 'right'
@@ -384,22 +362,21 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
     ctx.fillText(effortA.segment.name, W - PAD.right, statsY + 24)
 
   }, [effortA, effortB, summaryA, summaryB, minElev, maxElev, elevRange])
-  // Animation loop
-  const animate = useCallback((duration: number, onComplete?: () => void) => {
-    const start = performance.now() - pausedAtRef.current * duration
-    startTimeRef.current = start
+  const animate = useCallback((duration: number, startProgress: number, onComplete?: () => void) => {
+    const startTime = performance.now()
+    const startT = startProgress
 
     function frame(now: number) {
-      const elapsed = now - start
-      const t = Math.min(elapsed / duration, 1)
+      const elapsed = now - startTime
+      const t = Math.min(startT + elapsed / duration, 1)
+      progressRef.current = t
       setProgress(t)
       drawFrame(t)
-
       if (t < 1) {
         animFrameRef.current = requestAnimationFrame(frame)
       } else {
         setPlaying(false)
-        pausedAtRef.current = 0
+        progressRef.current = 0
         onComplete?.()
       }
     }
@@ -409,8 +386,11 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
 
   function play() {
     cancelAnimationFrame(animFrameRef.current)
+    const currentT = progressRef.current >= 1 ? 0 : progressRef.current
+    const remainingDuration = PREVIEW_DURATION * (1 - currentT)
+    progressRef.current = currentT
     setPlaying(true)
-    animate(PREVIEW_DURATION)
+    animate(remainingDuration, currentT)
   }
 
   function pause() {
@@ -421,28 +401,21 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
   function seek(t: number) {
     cancelAnimationFrame(animFrameRef.current)
     setPlaying(false)
-    pausedAtRef.current = t
+    progressRef.current = t
     setProgress(t)
     drawFrame(t)
   }
 
   function restart() {
     cancelAnimationFrame(animFrameRef.current)
-    pausedAtRef.current = 0
+    progressRef.current = 0
     setProgress(0)
     drawFrame(0)
     setPlaying(false)
   }
 
-  // Draw initial frame on mount
-  useEffect(() => {
-    drawFrame(0)
-  }, [drawFrame])
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => cancelAnimationFrame(animFrameRef.current)
-  }, [])
+  useEffect(() => { drawFrame(0) }, [drawFrame])
+  useEffect(() => { return () => cancelAnimationFrame(animFrameRef.current) }, [])
 
   async function exportMp4() {
     const canvas = canvasRef.current
@@ -456,10 +429,13 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
     setExporting(true)
     setExportError(null)
     cancelAnimationFrame(animFrameRef.current)
-    pausedAtRef.current = 0
+    progressRef.current = 0
 
     const stream = canvas.captureStream(30)
-    const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8', videoBitsPerSecond: 4000000 })
+    const recorder = new MediaRecorder(stream, {
+      mimeType: 'video/webm;codecs=vp8',
+      videoBitsPerSecond: 4000000,
+    })
     const chunks: Blob[] = []
 
     recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
@@ -472,13 +448,11 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
       a.click()
       URL.revokeObjectURL(url)
       setExporting(false)
-      drawFrame(progress)
+      drawFrame(progressRef.current)
     }
 
     recorder.start()
-    animate(EXPORT_DURATION, () => {
-      recorder.stop()
-    })
+    animate(EXPORT_DURATION, 0, () => { recorder.stop() })
   }
 
   const progressPct = Math.round(progress * 100)
@@ -494,7 +468,6 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
         style={{ borderRadius: '8px', maxWidth: '100%', display: 'block' }}
       />
 
-      {/* Scrubber */}
       <div className="mt-3 flex items-center gap-3">
         <button
           onClick={playing ? pause : play}
@@ -503,10 +476,7 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
           {playing ? '⏸' : '▶'}
         </button>
         <input
-          type="range"
-          min={0}
-          max={100}
-          value={progressPct}
+          type="range" min={0} max={100} value={progressPct}
           onChange={e => seek(parseInt(e.target.value) / 100)}
           className="flex-1 accent-strava"
         />
@@ -515,7 +485,6 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
         </span>
       </div>
 
-      {/* Export button */}
       <div className="mt-3 flex items-center gap-3">
         <button
           onClick={exporting ? undefined : exportMp4}
@@ -769,11 +738,9 @@ function drawExportCard(
   drawStatBar('AVG HR', effortA.averageHeartRate, effortB.averageHeartRate,
     effortA.averageHeartRate != null ? `${Math.round(effortA.averageHeartRate)} bpm` : '—',
     effortB.averageHeartRate != null ? `${Math.round(effortB.averageHeartRate)} bpm` : '—')
-
   drawStatBar('AVG SPEED', effortA.averageSpeedKph, effortB.averageSpeedKph,
     effortA.averageSpeedKph != null ? `${effortA.averageSpeedKph.toFixed(1)} km/h` : '—',
     effortB.averageSpeedKph != null ? `${effortB.averageSpeedKph.toFixed(1)} km/h` : '—')
-
   if (effortA.averagePowerWatts != null || effortB.averagePowerWatts != null) {
     drawStatBar('AVG POWER', effortA.averagePowerWatts, effortB.averagePowerWatts,
       effortA.averagePowerWatts != null ? `${Math.round(effortA.averagePowerWatts)}W${!summaryA.device_watts ? ' est.' : ''}` : '—',
@@ -802,7 +769,6 @@ function drawExportCard(
   const minEl = Math.min(...elevPoints)
   const maxEl = Math.max(...elevPoints)
   const elRange = maxEl - minEl || 1
-
   const pts = elevPoints.map((v, i) => ({
     x: elPad + (i / (elevPoints.length - 1)) * elW,
     y: elY + elH - 4 - ((v - minEl) / elRange) * (elH - 14),
@@ -813,10 +779,10 @@ function drawExportCard(
   pts.forEach(p => ctx.lineTo(p.x, p.y))
   ctx.lineTo(pts[pts.length - 1].x, elY + elH)
   ctx.closePath()
-  const grad = ctx.createLinearGradient(0, elY, 0, elY + elH)
-  grad.addColorStop(0, 'rgba(252,76,2,0.35)')
-  grad.addColorStop(1, 'rgba(252,76,2,0.05)')
-  ctx.fillStyle = grad
+  const elGrad = ctx.createLinearGradient(0, elY, 0, elY + elH)
+  elGrad.addColorStop(0, 'rgba(252,76,2,0.35)')
+  elGrad.addColorStop(1, 'rgba(252,76,2,0.05)')
+  ctx.fillStyle = elGrad
   ctx.fill()
 
   ctx.beginPath()
@@ -1030,7 +996,6 @@ function CompareContent() {
           </div>
         )}
 
-        {/* Segment Replay */}
         {data && summaryA && summaryB && (
           <SegmentReplay
             effortA={effortA}
@@ -1043,8 +1008,10 @@ function CompareContent() {
         {data && (
           <div className="bg-surface border border-border rounded-2xl p-4 mb-6">
             <div className="text-xs text-text-muted mb-3">Export card</div>
-            <canvas ref={canvasRef} width={390} height={700} style={{ borderRadius: '12px', maxWidth: '100%' }} />
-            <button onClick={handleDownload} className="w-full mt-4 bg-strava hover:bg-strava-dark transition-colors text-white text-sm font-medium py-3 rounded-xl">
+            <canvas ref={canvasRef} width={390} height={700}
+              style={{ borderRadius: '12px', maxWidth: '100%' }} />
+            <button onClick={handleDownload}
+              className="w-full mt-4 bg-strava hover:bg-strava-dark transition-colors text-white text-sm font-medium py-3 rounded-xl">
               Download PNG
             </button>
           </div>
