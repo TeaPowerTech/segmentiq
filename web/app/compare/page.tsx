@@ -178,7 +178,6 @@ function drawExportCard(
 
   const deltaColour = timeDelta < 0 ? GREEN : timeDelta > 0 ? RED : WHITE
 
-  // Background
   roundRect(0, 0, W, H, 16)
   ctx.fillStyle = BG
   ctx.fill()
@@ -187,11 +186,9 @@ function drawExportCard(
   ctx.lineWidth = 1
   ctx.stroke()
 
-  // Orange left accent
   ctx.fillStyle = ORANGE
   ctx.fillRect(0, 0, 4, H)
 
-  // Header
   ctx.fillStyle = SURFACE
   ctx.fillRect(0, 0, W, 58)
   ctx.strokeStyle = BORDER
@@ -220,7 +217,6 @@ function drawExportCard(
   ctx.textAlign = 'right'
   ctx.fillText('SEGMENTIQ', W - 20, 35)
 
-  // Times row
   const timesY = 58
   const halfW = W / 2
 
@@ -235,7 +231,6 @@ function drawExportCard(
   ctx.lineTo(W, timesY + 110)
   ctx.stroke()
 
-  // Effort A
   ctx.fillStyle = BLUE
   ctx.font = '500 10px -apple-system, sans-serif'
   ctx.textAlign = 'left'
@@ -263,7 +258,6 @@ function drawExportCard(
     ctx.fillText('PR', 34, timesY + 94)
   }
 
-  // Delta in centre — compact, no overlap
   ctx.fillStyle = deltaColour
   ctx.font = '600 13px -apple-system, sans-serif'
   ctx.textAlign = 'center'
@@ -278,7 +272,6 @@ function drawExportCard(
     halfW, timesY + 62
   )
 
-  // Effort B
   ctx.fillStyle = ORANGE
   ctx.font = '500 10px -apple-system, sans-serif'
   ctx.textAlign = 'left'
@@ -306,7 +299,6 @@ function drawExportCard(
     ctx.fillText('PR', halfW + 34, timesY + 94)
   }
 
-  // Metrics section
   const metY = timesY + 110
   const barW = W - 40
   const barMid = W / 2
@@ -317,7 +309,6 @@ function drawExportCard(
   ctx.fillText('METRICS', 20, metY + 20)
 
   let mY = metY + 34
-
   function drawStatBar(
     label: string,
     valA: number | null,
@@ -342,7 +333,6 @@ function drawExportCard(
     ctx.textAlign = 'right'
     ctx.fillText(valB != null ? formatB : '—', W - 20, mY)
 
-    // Bar track
     ctx.fillStyle = BORDER
     roundRect(20, mY + 5, barW, 5, 3)
     ctx.fill()
@@ -376,4 +366,333 @@ function drawExportCard(
   )
 
   drawStatBar(
-    'AVG S
+    'AVG SPEED',
+    effortA.averageSpeedKph,
+    effortB.averageSpeedKph,
+    effortA.averageSpeedKph != null ? `${effortA.averageSpeedKph.toFixed(1)} km/h` : '—',
+    effortB.averageSpeedKph != null ? `${effortB.averageSpeedKph.toFixed(1)} km/h` : '—',
+  )
+
+  if (effortA.averagePowerWatts != null || effortB.averagePowerWatts != null) {
+    drawStatBar(
+      'AVG POWER',
+      effortA.averagePowerWatts,
+      effortB.averagePowerWatts,
+      effortA.averagePowerWatts != null
+        ? `${Math.round(effortA.averagePowerWatts)}W${!summaryA.device_watts ? ' est.' : ''}` : '—',
+      effortB.averagePowerWatts != null
+        ? `${Math.round(effortB.averagePowerWatts)}W${!summaryB.device_watts ? ' est.' : ''}` : '—',
+    )
+  }
+
+  const divY = mY + 4
+  ctx.strokeStyle = BORDER
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.moveTo(0, divY)
+  ctx.lineTo(W, divY)
+  ctx.stroke()
+
+  const elY = divY + 14
+  const elH = 80
+  const elPad = 20
+  const elW = W - elPad * 2
+
+  ctx.fillStyle = DIM
+  ctx.font = '400 10px -apple-system, sans-serif'
+  ctx.textAlign = 'left'
+  ctx.fillText('ELEVATION PROFILE', elPad, elY - 4)
+
+  const elevPoints = effortA.points.map(p => p.elevationMetres)
+  const minEl = Math.min(...elevPoints)
+  const maxEl = Math.max(...elevPoints)
+  const elRange = maxEl - minEl || 1
+
+  const pts = elevPoints.map((v, i) => ({
+    x: elPad + (i / (elevPoints.length - 1)) * elW,
+    y: elY + elH - 4 - ((v - minEl) / elRange) * (elH - 14),
+  }))
+
+  ctx.beginPath()
+  ctx.moveTo(pts[0].x, elY + elH)
+  pts.forEach(p => ctx.lineTo(p.x, p.y))
+  ctx.lineTo(pts[pts.length - 1].x, elY + elH)
+  ctx.closePath()
+  const grad = ctx.createLinearGradient(0, elY, 0, elY + elH)
+  grad.addColorStop(0, 'rgba(252,76,2,0.35)')
+  grad.addColorStop(1, 'rgba(252,76,2,0.05)')
+  ctx.fillStyle = grad
+  ctx.fill()
+
+  ctx.beginPath()
+  ctx.moveTo(pts[0].x, pts[0].y)
+  pts.forEach(p => ctx.lineTo(p.x, p.y))
+  ctx.strokeStyle = ORANGE
+  ctx.lineWidth = 2
+  ctx.lineJoin = 'round'
+  ctx.stroke()
+
+  ctx.strokeStyle = BORDER
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.moveTo(elPad, elY + elH)
+  ctx.lineTo(W - elPad, elY + elH)
+  ctx.stroke()
+
+  const footY = elY + elH + 14
+  ctx.strokeStyle = BORDER
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.moveTo(0, footY)
+  ctx.lineTo(W, footY)
+  ctx.stroke()
+
+  ctx.fillStyle = DIMMER
+  ctx.font = '600 11px -apple-system, sans-serif'
+  ctx.textAlign = 'left'
+  ctx.fillText('SEGMENTIQ', 20, footY + 22)
+
+  ctx.fillStyle = DIMMER
+  ctx.font = '400 10px -apple-system, sans-serif'
+  ctx.textAlign = 'right'
+  ctx.fillText('segmentiq.vercel.app', W - 20, footY + 22)
+}
+
+function CompareContent() {
+  const router = useRouter()
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [data, setData] = useState<CompareData | null>(null)
+  const [summaryA, setSummaryA] = useState<Effort | null>(null)
+  const [summaryB, setSummaryB] = useState<Effort | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    async function loadComparison() {
+      const session = localStorage.getItem('session')
+      if (!session) { router.push('/'); return }
+
+      const rawA = localStorage.getItem('compareEffortA')
+      const rawB = localStorage.getItem('compareEffortB')
+
+      if (!rawA || !rawB) {
+        setError('No efforts selected — please go back and select two efforts')
+        setLoading(false)
+        return
+      }
+
+      const effortA: Effort = JSON.parse(rawA)
+      const effortB: Effort = JSON.parse(rawB)
+      setSummaryA(effortA)
+      setSummaryB(effortB)
+
+      try {
+        const res = await fetch(
+          `/api/efforts/compare?a=${effortA.id}&b=${effortB.id}`,
+          { headers: { 'x-session': session } }
+        )
+        if (res.status === 401) {
+          localStorage.removeItem('session')
+          router.push('/')
+          return
+        }
+        if (!res.ok) throw new Error('Failed to fetch comparison')
+        const json = await res.json()
+        setData(json.data)
+      } catch (err) {
+        setError('Failed to load comparison data')
+      } finally {
+        setLoading(false)
+      }
+    }
+    loadComparison()
+  }, [])
+
+  useEffect(() => {
+    if (data && summaryA && summaryB && canvasRef.current) {
+      drawExportCard(
+        canvasRef.current,
+        data.effortA,
+        data.effortB,
+        summaryA,
+        summaryB,
+        data.deltas.totalTimeDeltaSeconds
+      )
+    }
+  }, [data, summaryA, summaryB])
+
+  function handleDownload() {
+    if (!canvasRef.current) return
+    const link = document.createElement('a')
+    link.download = 'segmentiq-comparison.png'
+    link.href = canvasRef.current.toDataURL('image/png')
+    link.click()
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-text-muted text-sm">Loading comparison...</div>
+      </div>
+    )
+  }
+
+  if (error || !data || !summaryA || !summaryB) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center px-4 gap-4">
+        <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-4 text-red-400 text-sm">
+          {error ?? 'Something went wrong'}
+        </div>
+        <button onClick={() => router.back()} className="text-text-secondary text-sm hover:text-white transition-colors">
+          ← Go back
+        </button>
+      </div>
+    )
+  }
+
+  const { effortA, effortB, deltas } = data
+  const timeDelta = deltas.totalTimeDeltaSeconds
+
+  return (
+    <div className="min-h-screen bg-background">
+      <div className="border-b border-border px-4 py-4 flex items-center gap-3">
+        <button onClick={() => router.back()} className="text-text-secondary hover:text-white transition-colors text-lg">←</button>
+        <div>
+          <h1 className="font-semibold text-sm">{effortA.segment.name}</h1>
+          <p className="text-text-muted text-xs">Effort comparison</p>
+        </div>
+      </div>
+
+      <div className="max-w-2xl mx-auto px-4 py-6">
+
+        <div className="grid grid-cols-2 gap-3 mb-6">
+          <div className="bg-surface border border-border rounded-2xl p-4">
+            <div className="text-blue-400 text-xs font-medium mb-1">Effort A</div>
+            <div className="text-white font-semibold text-lg">{formatTime(effortA.elapsedSeconds)}</div>
+            <div className="text-text-muted text-xs mt-1">{formatDate(effortA.startDate)}</div>
+            {effortA.prRank === 1 && (
+              <span className="inline-block mt-2 text-xs font-medium px-2 py-0.5 rounded-full border bg-yellow-500/20 text-yellow-400 border-yellow-500/30">PR</span>
+            )}
+          </div>
+          <div className="bg-surface border border-border rounded-2xl p-4">
+            <div className="text-strava text-xs font-medium mb-1">Effort B</div>
+            <div className="text-white font-semibold text-lg">{formatTime(effortB.elapsedSeconds)}</div>
+            <div className="text-text-muted text-xs mt-1">{formatDate(effortB.startDate)}</div>
+            {effortB.prRank === 1 && (
+              <span className="inline-block mt-2 text-xs font-medium px-2 py-0.5 rounded-full border bg-yellow-500/20 text-yellow-400 border-yellow-500/30">PR</span>
+            )}
+          </div>
+        </div>
+
+        <div className={`rounded-2xl p-4 mb-6 text-center border ${
+          timeDelta < 0 ? 'bg-green-500/10 border-green-500/20' :
+          timeDelta > 0 ? 'bg-red-500/10 border-red-500/20' :
+          'bg-surface border-border'
+        }`}>
+          <div className="text-xs text-text-muted mb-1">Time difference</div>
+          <div className={`text-2xl font-semibold ${timeDelta < 0 ? 'text-green-400' : timeDelta > 0 ? 'text-red-400' : 'text-white'}`}>
+            {timeDelta < 0 ? '▲ ' : timeDelta > 0 ? '▼ ' : ''}{Math.abs(timeDelta)}s
+          </div>
+          <div className="text-xs text-text-muted mt-1">
+            {timeDelta < 0 ? 'Effort A was faster' : timeDelta > 0 ? 'Effort B was faster' : 'Dead heat'}
+          </div>
+        </div>
+
+        <div className="bg-surface border border-border rounded-2xl px-4 mb-6">
+          <div className="grid grid-cols-3 items-center py-2 border-b border-border">
+            <div className="text-blue-400 text-xs font-medium">A</div>
+            <div className="text-center text-text-muted text-xs">Metric</div>
+            <div className="text-strava text-xs font-medium text-right">B</div>
+          </div>
+          <MetricRow
+            label="Avg HR"
+            valueA={effortA.averageHeartRate != null ? `${Math.round(effortA.averageHeartRate)} bpm` : null}
+            valueB={effortB.averageHeartRate != null ? `${Math.round(effortB.averageHeartRate)} bpm` : null}
+            delta={effortA.averageHeartRate != null && effortB.averageHeartRate != null
+              ? effortA.averageHeartRate - effortB.averageHeartRate : null}
+            unit=" bpm"
+            invert={true}
+          />
+          <MetricRow
+            label="Avg speed"
+            valueA={effortA.averageSpeedKph != null ? `${effortA.averageSpeedKph.toFixed(1)} km/h` : null}
+            valueB={effortB.averageSpeedKph != null ? `${effortB.averageSpeedKph.toFixed(1)} km/h` : null}
+            delta={effortA.averageSpeedKph != null && effortB.averageSpeedKph != null
+              ? effortA.averageSpeedKph - effortB.averageSpeedKph : null}
+            unit=" km/h"
+          />
+          {(effortA.hasPower || effortB.hasPower) && (
+            <MetricRow
+              label="Avg power"
+              valueA={effortA.averagePowerWatts != null
+                ? `${Math.round(effortA.averagePowerWatts)}W${!summaryA.device_watts ? ' est.' : ''}` : null}
+              valueB={effortB.averagePowerWatts != null
+                ? `${Math.round(effortB.averagePowerWatts)}W${!summaryB.device_watts ? ' est.' : ''}` : null}
+              delta={effortA.averagePowerWatts != null && effortB.averagePowerWatts != null
+                ? effortA.averagePowerWatts - effortB.averagePowerWatts : null}
+              unit="W"
+            />
+          )}
+        </div>
+
+        {effortA.points?.length > 0 && effortB.points?.length > 0 && (
+          <div className="bg-surface border border-border rounded-2xl p-4 mb-6">
+            <div className="text-xs text-text-muted mb-3">Speed across segment</div>
+            <div className="relative h-24">
+              <ScaledChart pointsA={effortA.points} pointsB={effortB.points} getValue={p => p.speedKph} />
+            </div>
+            <div className="flex items-center gap-4 mt-2">
+              <div className="flex items-center gap-2"><div className="w-4 h-0.5 bg-blue-400" /><span className="text-text-muted text-xs">Effort A</span></div>
+              <div className="flex items-center gap-2"><div className="w-4 h-0.5 bg-strava" /><span className="text-text-muted text-xs">Effort B</span></div>
+            </div>
+          </div>
+        )}
+
+        {effortA.averageHeartRate != null && effortB.averageHeartRate != null &&
+          effortA.points?.length > 0 && effortB.points?.length > 0 && (
+          <div className="bg-surface border border-border rounded-2xl p-4 mb-6">
+            <div className="text-xs text-text-muted mb-3">Heart rate across segment</div>
+            <div className="relative h-24">
+              <ScaledChart pointsA={effortA.points} pointsB={effortB.points} getValue={p => p.heartRate} />
+            </div>
+            <div className="flex items-center gap-4 mt-2">
+              <div className="flex items-center gap-2"><div className="w-4 h-0.5 bg-blue-400" /><span className="text-text-muted text-xs">Effort A</span></div>
+              <div className="flex items-center gap-2"><div className="w-4 h-0.5 bg-strava" /><span className="text-text-muted text-xs">Effort B</span></div>
+            </div>
+          </div>
+        )}
+
+        {data && (
+          <div className="bg-surface border border-border rounded-2xl p-4 mb-6">
+            <div className="text-xs text-text-muted mb-3">Export card</div>
+            <canvas
+              ref={canvasRef}
+              width={390}
+              height={680}
+              style={{ borderRadius: '12px', maxWidth: '100%' }}
+            />
+            <button
+              onClick={handleDownload}
+              className="w-full mt-4 bg-strava hover:bg-strava-dark transition-colors text-white text-sm font-medium py-3 rounded-xl"
+            >
+              Download PNG
+            </button>
+          </div>
+        )}
+
+      </div>
+    </div>
+  )
+}
+
+export default function ComparePage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-text-muted text-sm">Loading comparison...</div>
+      </div>
+    }>
+      <CompareContent />
+    </Suspense>
+  )
+}
