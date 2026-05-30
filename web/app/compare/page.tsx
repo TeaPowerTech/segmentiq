@@ -213,10 +213,11 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
   const PREVIEW_DURATION = 15000
   const EXPORT_DURATION = 30000
 
+  // Phases
   const PHASE_HEADER_END = 0.08
   const PHASE_TIMES_END = 0.28
   const PHASE_DELTA_END = 0.38
-  const PHASE_COUNTDOWN_END = 0.58  // slower countdown — 20% of duration
+  const PHASE_COUNTDOWN_END = 0.58
   const PHASE_RACE_END = 0.90
 
   const drawFrame = useCallback((t: number) => {
@@ -245,17 +246,17 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
     const WHITE = '#ffffff'
     const MUTED = '#888888'
     const DIM = '#444444'
-    const DIMMER = '#2a2a2a'
+    const DIMMER = '#333333'
     const GREEN = '#22C55E'
     const RED = '#EF4444'
     const GOLD = '#EAB308'
 
-    // Determine fastest effort — fastest gets orange, slower gets purple
     const aFaster = !eB || eA.elapsedSeconds <= eB.elapsedSeconds
     const colA = aFaster ? ORANGE : PURPLE
     const colB = aFaster ? PURPLE : ORANGE
 
     function roundRect(x: number, y: number, w: number, h: number, r: number) {
+      if (w <= 0) return
       ctx.beginPath()
       ctx.moveTo(x + r, y)
       ctx.lineTo(x + w - r, y)
@@ -274,6 +275,7 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
     ctx.fillStyle = ORANGE
     ctx.fillRect(0, 0, 4, H)
 
+    // Phase progress
     const headerAlpha = Math.min(t / PHASE_HEADER_END, 1)
     const timesT = t < PHASE_HEADER_END ? 0 : Math.min((t - PHASE_HEADER_END) / (PHASE_TIMES_END - PHASE_HEADER_END), 1)
     const deltaT = t < PHASE_TIMES_END ? 0 : Math.min((t - PHASE_TIMES_END) / (PHASE_DELTA_END - PHASE_TIMES_END), 1)
@@ -281,7 +283,81 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
     const raceT = t < PHASE_COUNTDOWN_END ? 0 : Math.min((t - PHASE_COUNTDOWN_END) / (PHASE_RACE_END - PHASE_COUNTDOWN_END), 1)
     const holdT = t < PHASE_RACE_END ? 0 : Math.min((t - PHASE_RACE_END) / (1 - PHASE_RACE_END), 1)
 
-    // ─── Header — prominent segment name ──────────────────────────────────────
+    // ─── Elevation profile — visible from t=0 ─────────────────────────────────
+    const elevStartY = 222  // fixed position below where header+times+delta will be
+    const elevH = 110
+    const elevPad = 16
+    const elevW = W - elevPad * 2
+
+    // Always draw elevation from the very start
+    const elevPts = eA.points.map((p, i) => ({
+      x: elevPad + (i / (eA.points.length - 1)) * elevW,
+      y: elevStartY + elevH - ((p.elevationMetres - minElev) / elevRange) * elevH,
+    }))
+
+    const grad = ctx.createLinearGradient(0, elevStartY, 0, elevStartY + elevH)
+    grad.addColorStop(0, 'rgba(252,76,2,0.2)')
+    grad.addColorStop(1, 'rgba(252,76,2,0.02)')
+    ctx.beginPath()
+    ctx.moveTo(elevPts[0].x, elevStartY + elevH)
+    elevPts.forEach(p => ctx.lineTo(p.x, p.y))
+    ctx.lineTo(elevPts[elevPts.length - 1].x, elevStartY + elevH)
+    ctx.closePath()
+    ctx.fillStyle = grad
+    ctx.fill()
+
+    ctx.beginPath()
+    elevPts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y))
+    ctx.strokeStyle = ORANGE
+    ctx.lineWidth = 1.5
+    ctx.lineJoin = 'round'
+    ctx.stroke()
+
+    // Grade profile — visible from t=0
+    const gradeY = elevStartY + elevH + 10
+    const gradeH = 18
+    const gradePad = 16
+    const gradeW = W - gradePad * 2
+
+    ctx.fillStyle = DIM
+    ctx.font = '400 9px -apple-system, sans-serif'
+    ctx.textAlign = 'left'
+    ctx.fillText('GRADIENT', gradePad, gradeY - 4)
+
+    const pts = eA.points
+    const segCount = 40
+    for (let i = 0; i < segCount; i++) {
+      const idx0 = Math.floor((i / segCount) * (pts.length - 1))
+      const idx1 = Math.floor(((i + 1) / segCount) * (pts.length - 1))
+      const p0 = pts[idx0]; const p1 = pts[idx1]
+      const distDiff = (p1.distancePct - p0.distancePct) * eA.segment.distanceMetres
+      const elevDiff = p1.elevationMetres - p0.elevationMetres
+      const grade = distDiff > 0 ? (elevDiff / distDiff) * 100 : 0
+      const x = gradePad + (i / segCount) * gradeW
+      ctx.fillStyle = gradeColour(grade)
+      roundRect(x, gradeY, gradeW / segCount + 1, gradeH, 2)
+      ctx.fill()
+    }
+
+    const legendItems = [
+      { label: '<3%', colour: '#22C55E' },
+      { label: '3-6%', colour: '#EAB308' },
+      { label: '6-10%', colour: '#FC4C02' },
+      { label: '>10%', colour: '#EF4444' },
+    ]
+    let lx = gradePad
+    const ly = gradeY + gradeH + 10
+    legendItems.forEach(item => {
+      ctx.fillStyle = item.colour
+      ctx.fillRect(lx, ly, 8, 6)
+      ctx.fillStyle = DIM
+      ctx.font = '400 9px -apple-system, sans-serif'
+      ctx.textAlign = 'left'
+      ctx.fillText(item.label, lx + 10, ly + 7)
+      lx += 52
+    })
+
+    // ─── Header ───────────────────────────────────────────────────────────────
     ctx.globalAlpha = headerAlpha
     ctx.fillStyle = SURFACE
     ctx.fillRect(0, 0, W, 68)
@@ -292,19 +368,16 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
     ctx.font = '500 10px -apple-system, sans-serif'
     ctx.textAlign = 'left'
     ctx.fillText('SEGMENT', 20, 18)
-
     ctx.fillStyle = WHITE
     ctx.font = '700 16px -apple-system, sans-serif'
     ctx.fillText(eA.segment.name, 20, 36)
-
     const distStr = eA.segment.distanceMetres >= 1000
       ? (eA.segment.distanceMetres / 1000).toFixed(1) + 'km'
       : Math.round(eA.segment.distanceMetres) + 'm'
     ctx.fillStyle = MUTED
     ctx.font = '400 11px -apple-system, sans-serif'
     ctx.fillText(`${distStr} · ${eA.segment.averageGradePct}% avg grade`, 20, 54)
-
-    ctx.fillStyle = DIM
+    ctx.fillStyle = DIMMER
     ctx.font = '600 11px -apple-system, sans-serif'
     ctx.textAlign = 'right'
     ctx.fillText('SEGMENTIQ', W - 20, 36)
@@ -320,15 +393,11 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
     ctx.beginPath(); ctx.moveTo(halfW, timesY); ctx.lineTo(halfW, timesY + 110); ctx.stroke()
 
     const countedA = countUpTime(eA.elapsedSeconds, easeInOut(timesT))
-    ctx.fillStyle = colA
-    ctx.font = '500 10px -apple-system, sans-serif'
-    ctx.textAlign = 'left'
+    ctx.fillStyle = colA; ctx.font = '500 10px -apple-system, sans-serif'; ctx.textAlign = 'left'
     ctx.fillText('EFFORT A', 20, timesY + 20)
-    ctx.fillStyle = colA
-    ctx.font = '700 36px -apple-system, sans-serif'
+    ctx.fillStyle = colA; ctx.font = '700 36px -apple-system, sans-serif'
     ctx.fillText(formatTime(countedA), 20, timesY + 58)
-    ctx.fillStyle = DIM
-    ctx.font = '400 11px -apple-system, sans-serif'
+    ctx.fillStyle = DIM; ctx.font = '400 11px -apple-system, sans-serif'
     ctx.fillText(formatDate(eA.startDate), 20, timesY + 74)
 
     if (eA.prRank === 1 && timesT > 0.8) {
@@ -344,15 +413,11 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
 
     if (eB) {
       const countedB = countUpTime(eB.elapsedSeconds, easeInOut(timesT))
-      ctx.fillStyle = colB
-      ctx.font = '500 10px -apple-system, sans-serif'
-      ctx.textAlign = 'left'
+      ctx.fillStyle = colB; ctx.font = '500 10px -apple-system, sans-serif'; ctx.textAlign = 'left'
       ctx.fillText('EFFORT B', halfW + 20, timesY + 20)
-      ctx.fillStyle = colB
-      ctx.font = '700 36px -apple-system, sans-serif'
+      ctx.fillStyle = colB; ctx.font = '700 36px -apple-system, sans-serif'
       ctx.fillText(formatTime(countedB), halfW + 20, timesY + 58)
-      ctx.fillStyle = DIM
-      ctx.font = '400 11px -apple-system, sans-serif'
+      ctx.fillStyle = DIM; ctx.font = '400 11px -apple-system, sans-serif'
       ctx.fillText(formatDate(eB.startDate), halfW + 20, timesY + 74)
 
       if (eB.prRank === 1 && timesT > 0.8) {
@@ -380,9 +445,7 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
       ctx.strokeStyle = BORDER; ctx.lineWidth = 1
       ctx.beginPath(); ctx.moveTo(0, timesY + 110); ctx.lineTo(W, timesY + 110); ctx.stroke()
       ctx.beginPath(); ctx.moveTo(0, timesY + 146); ctx.lineTo(W, timesY + 146); ctx.stroke()
-      ctx.fillStyle = deltaColour
-      ctx.font = '700 16px -apple-system, sans-serif'
-      ctx.textAlign = 'center'
+      ctx.fillStyle = deltaColour; ctx.font = '700 16px -apple-system, sans-serif'; ctx.textAlign = 'center'
       ctx.fillText(
         timeDelta === 0 ? 'Dead heat' : `${timeDelta < 0 ? '▲' : '▼'} ${Math.abs(timeDelta)}s ${timeDelta < 0 ? '— A faster' : '— B faster'}`,
         W / 2, timesY + 133
@@ -390,36 +453,7 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
       ctx.globalAlpha = 1
     }
 
-    // ─── Elevation profile ────────────────────────────────────────────────────
-    const elevStartY = timesY + 146 + 8
-    const elevH = 110
-    const elevPad = 16
-    const elevW = W - elevPad * 2
-
-    if (deltaT > 0) {
-      ctx.globalAlpha = easeInOut(deltaT)
-      const elevPts = eA.points.map((p, i) => ({
-        x: elevPad + (i / (eA.points.length - 1)) * elevW,
-        y: elevStartY + elevH - ((p.elevationMetres - minElev) / elevRange) * elevH,
-      }))
-
-      const grad = ctx.createLinearGradient(0, elevStartY, 0, elevStartY + elevH)
-      grad.addColorStop(0, 'rgba(252,76,2,0.2)')
-      grad.addColorStop(1, 'rgba(252,76,2,0.02)')
-      ctx.beginPath()
-      ctx.moveTo(elevPts[0].x, elevStartY + elevH)
-      elevPts.forEach(p => ctx.lineTo(p.x, p.y))
-      ctx.lineTo(elevPts[elevPts.length - 1].x, elevStartY + elevH)
-      ctx.closePath()
-      ctx.fillStyle = grad; ctx.fill()
-
-      ctx.beginPath()
-      elevPts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y))
-      ctx.strokeStyle = ORANGE; ctx.lineWidth = 1.5; ctx.lineJoin = 'round'; ctx.stroke()
-      ctx.globalAlpha = 1
-    }
-
-    // ─── Countdown ────────────────────────────────────────────────────────────
+    // ─── Countdown over elevation ─────────────────────────────────────────────
     if (countdownT > 0 && countdownT < 1) {
       const cd = countdownT * 4
       let label = ''
@@ -448,13 +482,12 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
       ctx.globalAlpha = 1
     }
 
-    // ─── Racing dots and trails ───────────────────────────────────────────────
+    // ─── Racing dots ──────────────────────────────────────────────────────────
     const tA = Math.min(raceT, 1)
     const ratioB = eB ? eB.elapsedSeconds / eA.elapsedSeconds : 1
     const tB = eB ? Math.min(raceT / ratioB, 1) : 1
 
     if (raceT > 0) {
-      // Trail A — uses eA elevation for y (fix: same physical segment)
       const trailAEnd = Math.floor(tA * (eA.points.length - 1))
       if (trailAEnd > 0) {
         ctx.beginPath()
@@ -464,31 +497,26 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
           const y = elevStartY + elevH - ((p.elevationMetres - minElev) / elevRange) * elevH
           i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)
         }
-        ctx.strokeStyle = colA.replace(')', ', 0.7)').replace('rgb', 'rgba')
-        // fallback for hex colours
-        ctx.strokeStyle = colA === ORANGE ? 'rgba(252,76,2,0.7)' : 'rgba(168,85,247,0.7)'
+        ctx.strokeStyle = colA === ORANGE ? 'rgba(252,76,2,0.8)' : 'rgba(168,85,247,0.8)'
         ctx.lineWidth = 2.5; ctx.lineJoin = 'round'; ctx.stroke()
       }
 
-      // Trail B — ALSO uses eA elevation for y so both trails follow the same profile
       if (eB) {
         const trailBEnd = Math.floor(tB * (eB.points.length - 1))
         if (trailBEnd > 0) {
           ctx.beginPath()
           for (let i = 0; i <= trailBEnd; i++) {
-            // Use eA's elevation at same index for y-position (same segment, same terrain)
             const pB = eB.points[i]
             const pA = eA.points[Math.min(i, eA.points.length - 1)]
             const x = elevPad + pB.distancePct * elevW
             const y = elevStartY + elevH - ((pA.elevationMetres - minElev) / elevRange) * elevH
             i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)
           }
-          ctx.strokeStyle = colB === ORANGE ? 'rgba(252,76,2,0.7)' : 'rgba(168,85,247,0.7)'
+          ctx.strokeStyle = colB === ORANGE ? 'rgba(252,76,2,0.8)' : 'rgba(168,85,247,0.8)'
           ctx.lineWidth = 2.5; ctx.lineJoin = 'round'; ctx.stroke()
         }
       }
 
-      // Dot A
       const ptA = getPointAt(eA, tA)
       const dotAx = elevPad + ptA.distancePct * elevW
       const dotAy = elevStartY + elevH - ((ptA.elevationMetres - minElev) / elevRange) * elevH
@@ -501,11 +529,9 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
       ctx.fillStyle = colA; ctx.font = 'bold 10px -apple-system, sans-serif'; ctx.textAlign = 'center'
       ctx.fillText('A', dotAx, dotAy - 12)
 
-      // Dot B
       if (eB) {
         const ptB = getPointAt(eB, tB)
         const dotBx = elevPad + ptB.distancePct * elevW
-        // Fix: use eA elevation at same distancePct index for dot B y-position
         const bElevIdx = Math.min(Math.floor(tB * (eA.points.length - 1)), eA.points.length - 1)
         const dotBy = elevStartY + elevH - ((eA.points[bElevIdx].elevationMetres - minElev) / elevRange) * elevH
         const glowColB = colB === ORANGE ? 'rgba(252,76,2,' : 'rgba(168,85,247,'
@@ -519,92 +545,53 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
       }
     }
 
-    // ─── Grade profile ────────────────────────────────────────────────────────
-    const gradeY = elevStartY + elevH + 10
-    const gradeH = 18
-    const gradePad = 16
-    const gradeW = W - gradePad * 2
-
-    if (deltaT > 0) {
-      ctx.globalAlpha = easeInOut(deltaT)
-      ctx.fillStyle = DIM; ctx.font = '400 9px -apple-system, sans-serif'; ctx.textAlign = 'left'
-      ctx.fillText('GRADIENT', gradePad, gradeY - 4)
-
-      const pts = eA.points
-      const segCount = 40
-      for (let i = 0; i < segCount; i++) {
-        const idx0 = Math.floor((i / segCount) * (pts.length - 1))
-        const idx1 = Math.floor(((i + 1) / segCount) * (pts.length - 1))
-        const p0 = pts[idx0]; const p1 = pts[idx1]
-        const distDiff = (p1.distancePct - p0.distancePct) * eA.segment.distanceMetres
-        const elevDiff = p1.elevationMetres - p0.elevationMetres
-        const grade = distDiff > 0 ? (elevDiff / distDiff) * 100 : 0
-        const x = gradePad + (i / segCount) * gradeW
-        ctx.fillStyle = gradeColour(grade)
-        roundRect(x, gradeY, gradeW / segCount + 1, gradeH, 2)
-        ctx.fill()
-      }
-
-      const legendItems = [
-        { label: '<3%', colour: '#22C55E' },
-        { label: '3-6%', colour: '#EAB308' },
-        { label: '6-10%', colour: '#FC4C02' },
-        { label: '>10%', colour: '#EF4444' },
-      ]
-      let lx = gradePad
-      const ly = gradeY + gradeH + 10
-      legendItems.forEach(item => {
-        ctx.fillStyle = item.colour; ctx.fillRect(lx, ly, 8, 6)
-        ctx.fillStyle = DIM; ctx.font = '400 9px -apple-system, sans-serif'; ctx.textAlign = 'left'
-        ctx.fillText(item.label, lx + 10, ly + 7)
-        lx += 52
-      })
-      ctx.globalAlpha = 1
-    }
-
-    // ─── Time gap tracker ─────────────────────────────────────────────────────
+    // ─── Time gap tracker — FIXED ─────────────────────────────────────────────
+    // Both riders start at t=0 and race in real time
+    // Wall clock advances. A finishes at eA.elapsedSeconds, B finishes at eB.elapsedSeconds
+    // Gap = distance A has covered vs distance B has covered, expressed in time
     const gapY = gradeY + gradeH + 28
-    const gapH = 48
+    const gapH = 52
     const gapPad = 16
     const gapW = W - gapPad * 2
     const gapAlpha = raceT > 0 ? Math.min(raceT * 4, 1) : 0
 
     if (gapAlpha > 0 && eB) {
       ctx.globalAlpha = gapAlpha
+
       ctx.fillStyle = DIM; ctx.font = '400 9px -apple-system, sans-serif'; ctx.textAlign = 'left'
       ctx.fillText('TIME GAP', gapPad, gapY)
 
-      const maxElapsed = Math.max(eA.elapsedSeconds, eB.elapsedSeconds)
-      const wallTime = raceT * maxElapsed
-      const aElapsed = Math.min(wallTime, eA.elapsedSeconds)
-      const bElapsed = Math.min(wallTime, eB.elapsedSeconds)
-      const aDistPct = aElapsed / eA.elapsedSeconds
-      const bDistPct = bElapsed / eB.elapsedSeconds
+      // Wall clock time elapsed in the race
+      const maxSecs = Math.max(eA.elapsedSeconds, eB.elapsedSeconds)
+      const wallSecs = raceT * maxSecs
+
+      // How far along has each rider progressed (0-1)
+      const aProgress = Math.min(wallSecs / eA.elapsedSeconds, 1)
+      const bProgress = Math.min(wallSecs / eB.elapsedSeconds, 1)
 
       const trackY = gapY + 12
       ctx.fillStyle = BORDER
       roundRect(gapPad, trackY, gapW, 6, 3); ctx.fill()
 
-      const aDotX = gapPad + aDistPct * gapW
+      const aDotX = gapPad + aProgress * gapW
+      const glowCA = colA === ORANGE ? 'rgba(252,76,2,' : 'rgba(168,85,247,'
       const glowTA = ctx.createRadialGradient(aDotX, trackY + 3, 0, aDotX, trackY + 3, 10)
-      const glowColA2 = colA === ORANGE ? 'rgba(252,76,2,' : 'rgba(168,85,247,'
-      glowTA.addColorStop(0, glowColA2 + '0.4)'); glowTA.addColorStop(1, glowColA2 + '0)')
+      glowTA.addColorStop(0, glowCA + '0.4)'); glowTA.addColorStop(1, glowCA + '0)')
       ctx.fillStyle = glowTA; ctx.beginPath(); ctx.arc(aDotX, trackY + 3, 10, 0, Math.PI * 2); ctx.fill()
       ctx.fillStyle = colA; ctx.beginPath(); ctx.arc(aDotX, trackY + 3, 5, 0, Math.PI * 2); ctx.fill()
       ctx.strokeStyle = WHITE; ctx.lineWidth = 1.5; ctx.stroke()
 
-      const bDotX = gapPad + bDistPct * gapW
+      const bDotX = gapPad + bProgress * gapW
+      const glowCB = colB === ORANGE ? 'rgba(252,76,2,' : 'rgba(168,85,247,'
       const glowTB = ctx.createRadialGradient(bDotX, trackY + 3, 0, bDotX, trackY + 3, 10)
-      const glowColB2 = colB === ORANGE ? 'rgba(252,76,2,' : 'rgba(168,85,247,'
-      glowTB.addColorStop(0, glowColB2 + '0.4)'); glowTB.addColorStop(1, glowColB2 + '0)')
+      glowTB.addColorStop(0, glowCB + '0.4)'); glowTB.addColorStop(1, glowCB + '0)')
       ctx.fillStyle = glowTB; ctx.beginPath(); ctx.arc(bDotX, trackY + 3, 10, 0, Math.PI * 2); ctx.fill()
       ctx.fillStyle = colB; ctx.beginPath(); ctx.arc(bDotX, trackY + 3, 5, 0, Math.PI * 2); ctx.fill()
       ctx.strokeStyle = WHITE; ctx.lineWidth = 1.5; ctx.stroke()
 
       if (Math.abs(aDotX - bDotX) > 4) {
-        const gapLineColour = aDotX > bDotX ? GREEN : RED
-        ctx.strokeStyle = gapLineColour; ctx.lineWidth = 2
-        ctx.setLineDash([3, 2])
+        ctx.strokeStyle = aDotX > bDotX ? GREEN : RED
+        ctx.lineWidth = 2; ctx.setLineDash([3, 2])
         ctx.beginPath()
         ctx.moveTo(Math.min(aDotX, bDotX) + 6, trackY + 3)
         ctx.lineTo(Math.max(aDotX, bDotX) - 6, trackY + 3)
@@ -612,29 +599,47 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
         ctx.setLineDash([])
       }
 
-      const timeDiffNow = aElapsed - bElapsed
-      const gapLabel = timeDiffNow === 0 ? 'Level'
-        : `${Math.abs(timeDiffNow).toFixed(0)}s ${timeDiffNow < 0 ? 'B leads' : 'A leads'}`
-      ctx.fillStyle = timeDiffNow > 0 ? GREEN : timeDiffNow < 0 ? RED : WHITE
-      ctx.font = 'bold 12px -apple-system, sans-serif'; ctx.textAlign = 'center'
-      ctx.fillText(gapLabel, W / 2, trackY + 28)
+      // Gap label: how many seconds ahead is the leading rider
+      // If aProgress > bProgress, A is further along — A leads
+      const aTimeEquiv = aProgress * eA.elapsedSeconds  // seconds A has completed
+      const bTimeEquiv = bProgress * eB.elapsedSeconds  // seconds B has completed
+      // At same wall clock, compare distance covered
+      const aDistCovered = aProgress * eA.segment.distanceMetres
+      const bDistCovered = bProgress * eB.segment.distanceMetres
+      const aAhead = aDistCovered > bDistCovered
+
+      // Express gap in seconds: how long would it take the trailing rider to cover the gap distance
+      const gapMetres = Math.abs(aDistCovered - bDistCovered)
+      const trailingSpeedMs = aAhead
+        ? (eB.segment.distanceMetres / eB.elapsedSeconds)
+        : (eA.segment.distanceMetres / eA.elapsedSeconds)
+      const gapSecs = trailingSpeedMs > 0 ? Math.round(gapMetres / trailingSpeedMs) : 0
+
+      const gapLabel = gapSecs < 2 ? 'Neck and neck'
+        : `${gapSecs}s ${aAhead ? 'A leads' : 'B leads'}`
+      const gapLabelColour = gapSecs < 2 ? WHITE : aAhead
+        ? (colA === ORANGE ? GREEN : RED)
+        : (colB === ORANGE ? GREEN : RED)
+
+      ctx.fillStyle = gapLabelColour; ctx.font = 'bold 13px -apple-system, sans-serif'; ctx.textAlign = 'center'
+      ctx.fillText(gapLabel, W / 2, trackY + 30)
 
       ctx.fillStyle = DIM; ctx.font = 'bold 9px -apple-system, sans-serif'
-      ctx.textAlign = 'left'; ctx.fillText('START', gapPad, trackY + 28)
-      ctx.textAlign = 'right'; ctx.fillText('FINISH', W - gapPad, trackY + 28)
+      ctx.textAlign = 'left'; ctx.fillText('START', gapPad, trackY + 30)
+      ctx.textAlign = 'right'; ctx.fillText('FINISH', W - gapPad, trackY + 30)
+
       ctx.globalAlpha = 1
     }
 
-    // ─── Live speed + pace readout ────────────────────────────────────────────
+    // ─── Live speed + pace — larger and more prominent ────────────────────────
     const liveY = gapY + gapH + 8
-    const liveH = 52
+    const liveH = 60
     const liveAlpha = raceT > 0 ? Math.min(raceT * 4, 1) : 0
 
     if (liveAlpha > 0) {
       ctx.globalAlpha = liveAlpha
       const halfLive = W / 2
 
-      // Divider
       ctx.strokeStyle = BORDER; ctx.lineWidth = 1
       ctx.beginPath(); ctx.moveTo(halfLive, liveY); ctx.lineTo(halfLive, liveY + liveH); ctx.stroke()
 
@@ -642,26 +647,30 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
       const ptBCurrent = eB ? getPointAt(eB, tB) : null
 
       // A side
-      ctx.fillStyle = colA; ctx.font = 'bold 10px -apple-system, sans-serif'; ctx.textAlign = 'left'
-      ctx.fillText('LIVE', 20, liveY + 13)
-      ctx.fillStyle = WHITE; ctx.font = 'bold 20px -apple-system, sans-serif'
-      ctx.fillText(`${ptACurrent.speedKph.toFixed(1)}`, 20, liveY + 35)
-      ctx.fillStyle = DIM; ctx.font = '400 9px -apple-system, sans-serif'
-      ctx.fillText(`km/h  ·  ${formatPace(ptACurrent.speedKph)}`, 20, liveY + 48)
+      ctx.fillStyle = colA; ctx.font = 'bold 9px -apple-system, sans-serif'; ctx.textAlign = 'left'
+      ctx.fillText('LIVE SPEED', 20, liveY + 12)
+      ctx.fillStyle = WHITE; ctx.font = 'bold 26px -apple-system, sans-serif'
+      ctx.fillText(`${ptACurrent.speedKph.toFixed(1)}`, 20, liveY + 40)
+      ctx.fillStyle = MUTED; ctx.font = '400 10px -apple-system, sans-serif'
+      ctx.fillText(`km/h`, 20, liveY + 54)
+      ctx.fillStyle = DIM; ctx.font = '400 10px -apple-system, sans-serif'
+      ctx.fillText(formatPace(ptACurrent.speedKph), 80, liveY + 54)
 
       // B side
       if (ptBCurrent) {
-        ctx.fillStyle = colB; ctx.font = 'bold 10px -apple-system, sans-serif'; ctx.textAlign = 'left'
-        ctx.fillText('LIVE', halfLive + 20, liveY + 13)
-        ctx.fillStyle = WHITE; ctx.font = 'bold 20px -apple-system, sans-serif'
-        ctx.fillText(`${ptBCurrent.speedKph.toFixed(1)}`, halfLive + 20, liveY + 35)
-        ctx.fillStyle = DIM; ctx.font = '400 9px -apple-system, sans-serif'
-        ctx.fillText(`km/h  ·  ${formatPace(ptBCurrent.speedKph)}`, halfLive + 20, liveY + 48)
+        ctx.fillStyle = colB; ctx.font = 'bold 9px -apple-system, sans-serif'; ctx.textAlign = 'left'
+        ctx.fillText('LIVE SPEED', halfLive + 20, liveY + 12)
+        ctx.fillStyle = WHITE; ctx.font = 'bold 26px -apple-system, sans-serif'
+        ctx.fillText(`${ptBCurrent.speedKph.toFixed(1)}`, halfLive + 20, liveY + 40)
+        ctx.fillStyle = MUTED; ctx.font = '400 10px -apple-system, sans-serif'
+        ctx.fillText(`km/h`, halfLive + 20, liveY + 54)
+        ctx.fillStyle = DIM; ctx.font = '400 10px -apple-system, sans-serif'
+        ctx.fillText(formatPace(ptBCurrent.speedKph), halfLive + 80, liveY + 54)
       }
       ctx.globalAlpha = 1
     }
 
-    // ─── Stat bars — tug of war from outer edges ──────────────────────────────
+    // ─── Tug of war bars — fallback to effort averages when missing ───────────
     const barsStartY = liveY + liveH + 8
     const barW = W - 40
     const barMid = W / 2
@@ -669,12 +678,22 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
 
     ctx.globalAlpha = barAlpha
 
-    const avgHrA = raceT > 0 ? avgUpTo(eA, tA, p => p.heartRate) : null
-    const avgHrB = raceT > 0 && eB ? avgUpTo(eB, tB, p => p.heartRate) : null
-    const avgSpeedA = raceT > 0 ? avgUpTo(eA, tA, p => p.speedKph) : null
-    const avgSpeedB = raceT > 0 && eB ? avgUpTo(eB, tB, p => p.speedKph) : null
-    const avgPowerA = raceT > 0 ? avgUpTo(eA, tA, p => p.powerWatts) : null
-    const avgPowerB = raceT > 0 && eB ? avgUpTo(eB, tB, p => p.powerWatts) : null
+    // Running averages — fall back to effort-level average when per-point unavailable
+    const runAvgHrA = raceT > 0 ? avgUpTo(eA, tA, p => p.heartRate) : null
+    const runAvgHrB = raceT > 0 && eB ? avgUpTo(eB, tB, p => p.heartRate) : null
+    const avgHrA = runAvgHrA ?? (eA.averageHeartRate ?? null)
+    const avgHrB = runAvgHrB ?? (eB?.averageHeartRate ?? null)
+
+    const runAvgSpeedA = raceT > 0 ? avgUpTo(eA, tA, p => p.speedKph) : null
+    const runAvgSpeedB = raceT > 0 && eB ? avgUpTo(eB, tB, p => p.speedKph) : null
+    const avgSpeedA = runAvgSpeedA ?? eA.averageSpeedKph
+    const avgSpeedB = runAvgSpeedB ?? eB?.averageSpeedKph ?? null
+
+    const runAvgPowerA = raceT > 0 ? avgUpTo(eA, tA, p => p.powerWatts) : null
+    const runAvgPowerB = raceT > 0 && eB ? avgUpTo(eB, tB, p => p.powerWatts) : null
+    const avgPowerA = runAvgPowerA ?? (eA.averagePowerWatts ?? null)
+    const avgPowerB = runAvgPowerB ?? (eB?.averagePowerWatts ?? null)
+
     const npA = raceT > 0 ? normalisedPowerUpTo(eA, tA) : null
     const npB = raceT > 0 && eB ? normalisedPowerUpTo(eB, tB) : null
 
@@ -685,15 +704,19 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
       valA: number | null, valB: number | null,
       fmtA: string, fmtB: string,
       subA?: string, subB?: string,
+      isEstimateA?: boolean, isEstimateB?: boolean,
     ) {
       if (valA == null && valB == null) return
 
-      // Values
       ctx.fillStyle = colA; ctx.font = '500 13px -apple-system, sans-serif'; ctx.textAlign = 'left'
       ctx.fillText(valA != null ? fmtA : '—', 20, bY + 16)
       if (subA) {
         ctx.fillStyle = DIM; ctx.font = '400 9px -apple-system, sans-serif'
         ctx.fillText(subA, 20, bY + 27)
+      }
+      if (isEstimateA && valA != null) {
+        ctx.fillStyle = DIM; ctx.font = '400 8px -apple-system, sans-serif'
+        ctx.fillText('avg', 20, bY + (subA ? 37 : 27))
       }
 
       ctx.fillStyle = DIM; ctx.font = '400 10px -apple-system, sans-serif'; ctx.textAlign = 'center'
@@ -705,49 +728,55 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
         ctx.fillStyle = DIM; ctx.font = '400 9px -apple-system, sans-serif'; ctx.textAlign = 'right'
         ctx.fillText(subB, W - 20, bY + 27)
       }
+      if (isEstimateB && valB != null) {
+        ctx.fillStyle = DIM; ctx.font = '400 8px -apple-system, sans-serif'; ctx.textAlign = 'right'
+        ctx.fillText('avg', W - 20, bY + (subB ? 37 : 27))
+      }
 
-      // Track
-      const trackY = bY + (subA || subB ? 33 : 22)
+      const trackY = bY + (subA || subB ? 36 : 22)
       ctx.fillStyle = BORDER
       roundRect(20, trackY, barW, 6, 3); ctx.fill()
 
-      const maxVal = Math.max(valA ?? 0, valB ?? 0)
+      const total = (valA ?? 0) + (valB ?? 0)
       const animEase = easeInOut(Math.min(raceT * 1.5, 1))
 
-      // Tug of war: bars grow from outer edges inward
-      // A grows from LEFT edge toward centre
-      // B grows from RIGHT edge toward centre
-      // Higher value gets more bar coverage
-      if (valA != null && maxVal > 0) {
-        const pctA = (valA / (valA + (valB ?? 0))) * animEase
-        const wA = pctA * barW
-        ctx.fillStyle = colA
-        roundRect(20, trackY, wA, 6, 2); ctx.fill()
-      }
-      if (valB != null && maxVal > 0) {
-        const pctB = ((valB ?? 0) / ((valA ?? 0) + (valB ?? 0))) * animEase
-        const wB = pctB * barW
-        ctx.fillStyle = colB
-        roundRect(20 + barW - wB, trackY, wB, 6, 2); ctx.fill()
+      if (total > 0) {
+        if (valA != null) {
+          const wA = (valA / total) * barW * animEase
+          ctx.fillStyle = colA
+          roundRect(20, trackY, wA, 6, 2); ctx.fill()
+        }
+        if (valB != null) {
+          const wB = (valB / total) * barW * animEase
+          ctx.fillStyle = colB
+          roundRect(20 + barW - wB, trackY, wB, 6, 2); ctx.fill()
+        }
       }
 
-      bY += (subA || subB ? 50 : 38)
+      bY += (subA || subB ? 52 : 38)
       ctx.strokeStyle = BORDER; ctx.lineWidth = 1
       ctx.beginPath(); ctx.moveTo(20, bY - 4); ctx.lineTo(W - 20, bY - 4); ctx.stroke()
     }
 
     drawTugBar('AVG HR', avgHrA, avgHrB,
       avgHrA != null ? `${Math.round(avgHrA)} bpm` : '—',
-      avgHrB != null ? `${Math.round(avgHrB)} bpm` : '—')
+      avgHrB != null ? `${Math.round(avgHrB)} bpm` : '—',
+      undefined, undefined,
+      runAvgHrA == null && avgHrA != null,
+      runAvgHrB == null && avgHrB != null,
+    )
     drawTugBar('AVG SPEED', avgSpeedA, avgSpeedB,
       avgSpeedA != null ? `${avgSpeedA.toFixed(1)} km/h` : '—',
-      avgSpeedB != null ? `${avgSpeedB.toFixed(1)} km/h` : '—')
+      avgSpeedB != null ? `${avgSpeedB.toFixed(1)} km/h` : '—',
+    )
     if (avgPowerA != null || avgPowerB != null) {
       drawTugBar('AVG POWER', avgPowerA, avgPowerB,
         avgPowerA != null ? `${Math.round(avgPowerA)}W${!sA.device_watts ? ' est.' : ''}` : '—',
         avgPowerB != null ? `${Math.round(avgPowerB)}W${!sB?.device_watts ? ' est.' : ''}` : '—',
-        npA != null ? `NP ${npA}W${!sA.device_watts ? ' est.' : ''}` : undefined,
-        npB != null ? `NP ${npB}W${!sB?.device_watts ? ' est.' : ''}` : undefined,
+        npA != null ? `NP ${npA}W` : undefined,
+        npB != null ? `NP ${npB}W` : undefined,
+        runAvgPowerA == null && avgPowerA != null,
+        runAvgPowerB == null && avgPowerB != null,
       )
     }
 
@@ -758,9 +787,9 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
     ctx.globalAlpha = footAlpha
     ctx.strokeStyle = BORDER; ctx.lineWidth = 1
     ctx.beginPath(); ctx.moveTo(0, H - 34); ctx.lineTo(W, H - 34); ctx.stroke()
-    ctx.fillStyle = DIMMER; ctx.font = '600 11px -apple-system, sans-serif'; ctx.textAlign = 'left'
+    ctx.fillStyle = '#555555'; ctx.font = '700 11px -apple-system, sans-serif'; ctx.textAlign = 'left'
     ctx.fillText('SEGMENTIQ', 20, H - 14)
-    ctx.fillStyle = DIMMER; ctx.font = '400 10px -apple-system, sans-serif'; ctx.textAlign = 'right'
+    ctx.fillStyle = '#444444'; ctx.font = '400 10px -apple-system, sans-serif'; ctx.textAlign = 'right'
     ctx.fillText('segmentiq.vercel.app', W - 20, H - 14)
     ctx.globalAlpha = 1
 
@@ -909,16 +938,20 @@ function drawExportCard(
   const SURFACE = '#111111'
   const BORDER = '#1e1e1e'
   const ORANGE = '#FC4C02'
-  const BLUE = '#60A5FA'
   const WHITE = '#ffffff'
   const MUTED = '#888888'
   const DIM = '#444444'
-  const DIMMER = '#2a2a2a'
+  const DIMMER = '#333333'
   const GREEN = '#22C55E'
   const RED = '#EF4444'
   const GOLD = '#EAB308'
 
+  const aFaster = timeDelta <= 0
+  const colA = aFaster ? ORANGE : '#A855F7'
+  const colB = aFaster ? '#A855F7' : ORANGE
+
   function roundRect(x: number, y: number, w: number, h: number, r: number) {
+    if (w <= 0) return
     ctx.beginPath()
     ctx.moveTo(x + r, y)
     ctx.lineTo(x + w - r, y)
@@ -933,9 +966,6 @@ function drawExportCard(
   }
 
   const deltaColour = timeDelta < 0 ? GREEN : timeDelta > 0 ? RED : WHITE
-  const aFaster = timeDelta <= 0
-  const colA = aFaster ? ORANGE : '#A855F7'
-  const colB = aFaster ? '#A855F7' : ORANGE
 
   roundRect(0, 0, W, H, 16)
   ctx.fillStyle = BG; ctx.fill()
@@ -956,7 +986,7 @@ function drawExportCard(
     : Math.round(effortA.segment.distanceMetres) + 'm'
   ctx.fillStyle = MUTED; ctx.font = '400 11px -apple-system, sans-serif'
   ctx.fillText(`${distStr} · ${effortA.segment.averageGradePct}% avg grade`, 20, 54)
-  ctx.fillStyle = DIM; ctx.font = '600 11px -apple-system, sans-serif'; ctx.textAlign = 'right'
+  ctx.fillStyle = DIMMER; ctx.font = '600 11px -apple-system, sans-serif'; ctx.textAlign = 'right'
   ctx.fillText('SEGMENTIQ', W - 20, 36)
 
   const timesY = 68
@@ -1039,7 +1069,8 @@ function drawExportCard(
     mY += 32
   }
 
-  drawStatBar('AVG HR', effortA.averageHeartRate, effortB.averageHeartRate,
+  drawStatBar('AVG HR',
+    effortA.averageHeartRate, effortB.averageHeartRate,
     effortA.averageHeartRate != null ? `${Math.round(effortA.averageHeartRate)} bpm` : '—',
     effortB.averageHeartRate != null ? `${Math.round(effortB.averageHeartRate)} bpm` : '—')
   drawStatBar('AVG SPEED', effortA.averageSpeedKph, effortB.averageSpeedKph,
@@ -1089,9 +1120,9 @@ function drawExportCard(
   const footY = elY + elH + 14
   ctx.strokeStyle = BORDER; ctx.lineWidth = 1
   ctx.beginPath(); ctx.moveTo(0, footY); ctx.lineTo(W, footY); ctx.stroke()
-  ctx.fillStyle = DIMMER; ctx.font = '600 11px -apple-system, sans-serif'; ctx.textAlign = 'left'
+  ctx.fillStyle = '#555555'; ctx.font = '700 11px -apple-system, sans-serif'; ctx.textAlign = 'left'
   ctx.fillText('SEGMENTIQ', 20, footY + 22)
-  ctx.fillStyle = DIMMER; ctx.font = '400 10px -apple-system, sans-serif'; ctx.textAlign = 'right'
+  ctx.fillStyle = '#444444'; ctx.font = '400 10px -apple-system, sans-serif'; ctx.textAlign = 'right'
   ctx.fillText('segmentiq.vercel.app', W - 20, footY + 22)
 }
 
