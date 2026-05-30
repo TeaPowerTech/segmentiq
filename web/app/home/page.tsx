@@ -47,7 +47,7 @@ function HomeContent() {
 
           {/* Segments */}
           <button
-            onClick={() => router.push('/segments')}
+            onClick={() => router.push('/dashboard')}
             className="bg-surface border border-border rounded-2xl p-6 text-left hover:border-strava transition-colors group"
           >
             <div className="flex items-start justify-between mb-4">
