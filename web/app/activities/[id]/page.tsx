@@ -66,7 +66,7 @@ function easeInOut(t: number): number {
   return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t
 }
 
-function countUp(target: number, t: number): number {
+function countUpNum(target: number, t: number): number {
   return Math.floor(target * Math.min(easeInOut(t), 1))
 }
 
@@ -79,8 +79,9 @@ function gradeColour(grade: number): string {
 }
 
 function getPointAt(points: ActivityPoint[], t: number): ActivityPoint {
-  const idx = Math.min(Math.floor(t * (points.length - 1)), points.length - 2)
-  const frac = t * (points.length - 1) - idx
+  const clamped = Math.max(0, Math.min(t, 1))
+  const idx = Math.min(Math.floor(clamped * (points.length - 1)), points.length - 2)
+  const frac = clamped * (points.length - 1) - idx
   const a = points[idx]
   const b = points[idx + 1]
   return {
@@ -89,12 +90,12 @@ function getPointAt(points: ActivityPoint[], t: number): ActivityPoint {
     elevationMetres: a.elevationMetres + (b.elevationMetres - a.elevationMetres) * frac,
     elevationGainMetres: a.elevationGainMetres + (b.elevationGainMetres - a.elevationGainMetres) * frac,
     heartRate: a.heartRate != null && b.heartRate != null
-      ? a.heartRate + (b.heartRate - a.heartRate) * frac : null,
+      ? a.heartRate + (b.heartRate - a.heartRate) * frac : (a.heartRate ?? b.heartRate),
     speedKph: a.speedKph + (b.speedKph - a.speedKph) * frac,
     powerWatts: a.powerWatts != null && b.powerWatts != null
-      ? a.powerWatts + (b.powerWatts - a.powerWatts) * frac : null,
+      ? a.powerWatts + (b.powerWatts - a.powerWatts) * frac : (a.powerWatts ?? b.powerWatts),
     cadence: a.cadence != null && b.cadence != null
-      ? a.cadence + (b.cadence - a.cadence) * frac : null,
+      ? a.cadence + (b.cadence - a.cadence) * frac : (a.cadence ?? b.cadence),
   }
 }
 
@@ -125,7 +126,7 @@ function drawActivityCard(
 
   function roundRect(x: number, y: number, w: number, h: number, radius: number) {
     const rw = r(w); if (rw <= 0) return
-    const rx2 = r(x), ry2 = ry(y), rh = r(h), rr = r(radius)
+    const rx2 = r(x), ry2 = ry(y), rh = r(h), rr = Math.min(r(radius), rw / 2, rh / 2)
     ctx.beginPath()
     ctx.moveTo(rx2 + rr, ry2)
     ctx.lineTo(rx2 + rw - rr, ry2)
@@ -140,43 +141,88 @@ function drawActivityCard(
   }
 
   const PAD = 16
-  const CW = 390 - PAD * 2
 
-  const PHASE_HEADER_END = 0.08
-  const PHASE_STATS_END = 0.30
-  const PHASE_SUMMARY_END = 0.40
-  const PHASE_COUNTDOWN_END = 0.58
+  // Fixed layout — all in unscaled 390px coords, no overlaps
+  const HEADER_Y = 0
+  const HEADER_H = 68
+  const STATS_Y = 68
+  const STATS_H = 130
+  const ELEV_Y = 198
+  const ELEV_H = 130
+  const GRADE_Y = 336
+  const GRADE_H = 18
+  const LEGEND_Y = 362
+  const LIVE_Y = 376
+  const FOOTER_Y = 686
+
+  // Animation phases — countdown FIRST
+  const PHASE_COUNTDOWN_END = 0.18
+  const PHASE_HEADER_END = 0.26
+  const PHASE_STATS_END = 0.46
   const PHASE_RACE_END = 0.92
 
-  const headerAlpha = Math.min(t / PHASE_HEADER_END, 1)
-  const statsT = t < PHASE_HEADER_END ? 0 : Math.min((t - PHASE_HEADER_END) / (PHASE_STATS_END - PHASE_HEADER_END), 1)
-  const summaryT = t < PHASE_STATS_END ? 0 : Math.min((t - PHASE_STATS_END) / (PHASE_SUMMARY_END - PHASE_STATS_END), 1)
-  const countdownT = t < PHASE_SUMMARY_END ? 0 : Math.min((t - PHASE_SUMMARY_END) / (PHASE_COUNTDOWN_END - PHASE_SUMMARY_END), 1)
-  const raceT = t < PHASE_COUNTDOWN_END ? 0 : Math.min((t - PHASE_COUNTDOWN_END) / (PHASE_RACE_END - PHASE_COUNTDOWN_END), 1)
-  const holdT = t < PHASE_RACE_END ? 0 : Math.min((t - PHASE_RACE_END) / (1 - PHASE_RACE_END), 1)
+  const countdownT = Math.min(t / PHASE_COUNTDOWN_END, 1)
+  const headerAlpha = t < PHASE_COUNTDOWN_END ? 0
+    : Math.min((t - PHASE_COUNTDOWN_END) / (PHASE_HEADER_END - PHASE_COUNTDOWN_END), 1)
+  const statsT = t < PHASE_HEADER_END ? 0
+    : Math.min((t - PHASE_HEADER_END) / (PHASE_STATS_END - PHASE_HEADER_END), 1)
+  const raceT = t < PHASE_STATS_END ? 0
+    : Math.min((t - PHASE_STATS_END) / (PHASE_RACE_END - PHASE_STATS_END), 1)
+  const holdT = t < PHASE_RACE_END ? 0
+    : Math.min((t - PHASE_RACE_END) / (1 - PHASE_RACE_END), 1)
 
   // Orange left accent
   ctx.fillStyle = ORANGE
   ctx.fillRect(0, safeTop, r(4), r(700))
 
-  // Elevation — always visible
-  const elevY = 230
-  const elevH = 120
+  // Countdown — 3, 2, 1, GO on black before anything else
+  if (countdownT < 1) {
+    const cd = countdownT * 4
+    let label = ''
+    let pulse = 0
+    if (cd < 1) { label = '3'; pulse = 1 - cd }
+    else if (cd < 2) { label = '2'; pulse = 1 - (cd - 1) }
+    else if (cd < 3) { label = '1'; pulse = 1 - (cd - 2) }
+    else { label = 'GO!'; pulse = cd - 3 }
+
+    const alpha = label === 'GO!'
+      ? Math.min(pulse * 3, 1) * (1 - Math.max((pulse - 0.5) * 2, 0))
+      : Math.min(pulse * 2, 1)
+    const scale = 1 + (1 - pulse) * 0.4
+
+    ctx.globalAlpha = alpha
+    ctx.save()
+    ctx.translate(r(195), ry(350))
+    ctx.scale(scale, scale)
+    ctx.fillStyle = label === 'GO!' ? GREEN : WHITE
+    ctx.font = `900 ${r(label === 'GO!' ? 64 : 96)}px -apple-system, sans-serif`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(label, 0, 0)
+    ctx.textBaseline = 'alphabetic'
+    ctx.restore()
+    ctx.globalAlpha = 1
+    if (countdownT < 0.95) return
+  }
+
+  // Elevation profile — always visible after countdown
+  ctx.globalAlpha = headerAlpha
+
   const elevPad = PAD
   const elevW = 390 - elevPad * 2
 
   const elevPts = activity.points.map((p, i) => ({
     x: r(elevPad + (i / (activity.points.length - 1)) * elevW),
-    y: ry(elevY + elevH - ((p.elevationMetres - minElev) / elevRange) * elevH),
+    y: ry(ELEV_Y + ELEV_H - ((p.elevationMetres - minElev) / elevRange) * ELEV_H),
   }))
 
-  const elevGrad = ctx.createLinearGradient(0, ry(elevY), 0, ry(elevY + elevH))
-  elevGrad.addColorStop(0, 'rgba(252,76,2,0.25)')
-  elevGrad.addColorStop(1, 'rgba(252,76,2,0.02)')
+  const elevGrad = ctx.createLinearGradient(0, ry(ELEV_Y), 0, ry(ELEV_Y + ELEV_H))
+  elevGrad.addColorStop(0, 'rgba(252,76,2,0.3)')
+  elevGrad.addColorStop(1, 'rgba(252,76,2,0.03)')
   ctx.beginPath()
-  ctx.moveTo(elevPts[0].x, ry(elevY + elevH))
+  ctx.moveTo(elevPts[0].x, ry(ELEV_Y + ELEV_H))
   elevPts.forEach(p => ctx.lineTo(p.x, p.y))
-  ctx.lineTo(elevPts[elevPts.length - 1].x, ry(elevY + elevH))
+  ctx.lineTo(elevPts[elevPts.length - 1].x, ry(ELEV_Y + ELEV_H))
   ctx.closePath()
   ctx.fillStyle = elevGrad; ctx.fill()
 
@@ -185,24 +231,20 @@ function drawActivityCard(
   ctx.strokeStyle = ORANGE; ctx.lineWidth = r(1.5); ctx.lineJoin = 'round'; ctx.stroke()
 
   // Grade profile
-  const gradeY = elevY + elevH + 10
-  const gradeH = 18
   ctx.fillStyle = DIM
   ctx.font = `${r(9)}px -apple-system, sans-serif`
   ctx.textAlign = 'left'
-  ctx.fillText('GRADIENT', r(PAD), ry(gradeY - 4))
+  ctx.fillText('GRADIENT', r(PAD), ry(GRADE_Y - 4))
 
-  const segCount = 40
-  for (let i = 0; i < segCount; i++) {
-    const idx0 = Math.floor((i / segCount) * (activity.points.length - 1))
-    const idx1 = Math.floor(((i + 1) / segCount) * (activity.points.length - 1))
+  for (let i = 0; i < 40; i++) {
+    const idx0 = Math.floor((i / 40) * (activity.points.length - 1))
+    const idx1 = Math.floor(((i + 1) / 40) * (activity.points.length - 1))
     const p0 = activity.points[idx0]; const p1 = activity.points[idx1]
     const distDiff = (p1.distancePct - p0.distancePct) * activity.distanceMetres
     const elevDiff = p1.elevationMetres - p0.elevationMetres
     const grade = distDiff > 0 ? (elevDiff / distDiff) * 100 : 0
-    const segX = PAD + (i / segCount) * (390 - PAD * 2)
     ctx.fillStyle = gradeColour(grade)
-    roundRect(segX, gradeY, (390 - PAD * 2) / segCount + 0.5, gradeH, 2)
+    roundRect(PAD + (i / 40) * (390 - PAD * 2), GRADE_Y, (390 - PAD * 2) / 40 + 0.5, GRADE_H, 2)
     ctx.fill()
   }
 
@@ -213,23 +255,23 @@ function drawActivityCard(
     { label: '>10%', colour: RED },
   ]
   let lx = PAD
-  const ly = gradeY + gradeH + 10
   legendItems.forEach(item => {
     ctx.fillStyle = item.colour
-    ctx.fillRect(r(lx), ry(ly), r(8), r(6))
-    ctx.fillStyle = item.colour
+    ctx.fillRect(r(lx), ry(LEGEND_Y), r(8), r(6))
     ctx.font = `${r(9)}px -apple-system, sans-serif`
     ctx.textAlign = 'left'
-    ctx.fillText(item.label, r(lx + 10), ry(ly + 7))
+    ctx.fillText(item.label, r(lx + 10), ry(LEGEND_Y + 7))
     lx += 52
   })
+
+  ctx.globalAlpha = 1
 
   // Header
   ctx.globalAlpha = headerAlpha
   ctx.fillStyle = SURFACE
-  ctx.fillRect(0, safeTop, W, r(68))
+  ctx.fillRect(0, safeTop, W, r(HEADER_H))
   ctx.strokeStyle = BORDER; ctx.lineWidth = 1
-  ctx.beginPath(); ctx.moveTo(0, ry(68)); ctx.lineTo(W, ry(68)); ctx.stroke()
+  ctx.beginPath(); ctx.moveTo(0, ry(HEADER_H)); ctx.lineTo(W, ry(HEADER_H)); ctx.stroke()
 
   ctx.fillStyle = MUTED
   ctx.font = `500 ${r(10)}px -apple-system, sans-serif`
@@ -248,116 +290,43 @@ function drawActivityCard(
   ctx.globalAlpha = 1
 
   // Stats count up
-  const statsY = 72
-  const statsAlpha = Math.min(statsT * 3, 1)
-  ctx.globalAlpha = statsAlpha
+  if (statsT > 0) {
+    ctx.globalAlpha = Math.min(statsT * 4, 1)
 
-  const countedTime = countUp(activity.movingTimeSeconds, statsT)
-  ctx.fillStyle = ORANGE
-  ctx.font = `700 ${r(48)}px -apple-system, sans-serif`
-  ctx.textAlign = 'center'
-  ctx.fillText(formatTime(countedTime), r(195), ry(statsY + 52))
-  ctx.fillStyle = MUTED
-  ctx.font = `400 ${r(10)}px -apple-system, sans-serif`
-  ctx.fillText('MOVING TIME', r(195), ry(statsY + 66))
-
-  const subY = statsY + 82
-  const thirdW = 390 / 3
-  const countedDist = countUp(activity.distanceMetres, statsT)
-  const countedElev = countUp(activity.totalElevationGain, statsT)
-
-  ctx.strokeStyle = BORDER; ctx.lineWidth = 1
-  ctx.beginPath(); ctx.moveTo(r(thirdW), ry(subY)); ctx.lineTo(r(thirdW), ry(subY + 44)); ctx.stroke()
-  ctx.beginPath(); ctx.moveTo(r(thirdW * 2), ry(subY)); ctx.lineTo(r(thirdW * 2), ry(subY + 44)); ctx.stroke()
-
-  ctx.fillStyle = WHITE
-  ctx.font = `700 ${r(20)}px -apple-system, sans-serif`
-  ctx.textAlign = 'center'
-  ctx.fillText(formatDistance(countedDist), r(thirdW * 0.5), ry(subY + 22))
-  ctx.fillText(`${Math.round(countedElev)}m`, r(thirdW * 1.5), ry(subY + 22))
-  ctx.fillText(`${(activity.averageSpeedKph ?? 0).toFixed(1)}`, r(thirdW * 2.5), ry(subY + 22))
-
-  ctx.fillStyle = MUTED
-  ctx.font = `400 ${r(9)}px -apple-system, sans-serif`
-  ctx.fillText('DISTANCE', r(thirdW * 0.5), ry(subY + 36))
-  ctx.fillText('ELEVATION', r(thirdW * 1.5), ry(subY + 36))
-  ctx.fillText('AVG KM/H', r(thirdW * 2.5), ry(subY + 36))
-  ctx.globalAlpha = 1
-
-  // Summary bars
-  const summaryY = statsY + 132
-  const summaryAlpha = easeInOut(summaryT)
-  ctx.globalAlpha = summaryAlpha
-
-  ctx.strokeStyle = BORDER; ctx.lineWidth = 1
-  ctx.beginPath(); ctx.moveTo(0, ry(summaryY)); ctx.lineTo(W, ry(summaryY)); ctx.stroke()
-
-  let sY = summaryY + 8
-
-  function drawSummaryBar(label: string, value: number | null, fmt: string, maxRef: number | null) {
-    if (value == null) return
+    const countedTime = countUpNum(activity.movingTimeSeconds, statsT)
     ctx.fillStyle = ORANGE
-    ctx.font = `500 ${r(13)}px -apple-system, sans-serif`
-    ctx.textAlign = 'left'
-    ctx.fillText(fmt, r(PAD + 4), ry(sY + 14))
-    ctx.fillStyle = DIM
-    ctx.font = `400 ${r(9)}px -apple-system, sans-serif`
-    ctx.textAlign = 'right'
-    ctx.fillText(label, r(390 - PAD), ry(sY + 14))
-    const trackY = sY + 20
-    ctx.fillStyle = BORDER
-    roundRect(PAD, trackY, CW, 5, 3); ctx.fill()
-    if (maxRef != null && maxRef > 0) {
-      const w = (value / maxRef) * CW * easeInOut(summaryT)
-      ctx.fillStyle = ORANGE
-      roundRect(PAD, trackY, w, 5, 2); ctx.fill()
-    }
-    sY += 34
-    ctx.strokeStyle = BORDER; ctx.lineWidth = 1
-    ctx.beginPath(); ctx.moveTo(r(PAD), ry(sY - 4)); ctx.lineTo(r(390 - PAD), ry(sY - 4)); ctx.stroke()
-  }
-
-  drawSummaryBar('AVG HR', activity.averageHeartRate,
-    activity.averageHeartRate != null ? `${Math.round(activity.averageHeartRate)} bpm` : '—',
-    activity.maxHeartRate)
-  drawSummaryBar('AVG SPEED', activity.averageSpeedKph,
-    activity.averageSpeedKph != null ? `${activity.averageSpeedKph.toFixed(1)} km/h` : '—',
-    activity.maxSpeedKph)
-  if (activity.averagePowerWatts != null) {
-    drawSummaryBar('AVG POWER', activity.averagePowerWatts,
-      `${Math.round(activity.averagePowerWatts)}W${!activity.hasPower ? ' est.' : ''}${activity.normalisedPowerWatts != null ? `  NP ${activity.normalisedPowerWatts}W` : ''}`,
-      activity.averagePowerWatts * 1.5)
-  }
-  ctx.globalAlpha = 1
-
-  // Countdown
-  if (countdownT > 0 && countdownT < 1) {
-    const cd = countdownT * 4
-    let label = ''
-    let pulse = 0
-    if (cd < 1) { label = '3'; pulse = 1 - cd }
-    else if (cd < 2) { label = '2'; pulse = 1 - (cd - 1) }
-    else if (cd < 3) { label = '1'; pulse = 1 - (cd - 2) }
-    else { label = 'GO!'; pulse = cd - 3 }
-    const alpha = label === 'GO!'
-      ? Math.min(pulse * 3, 1) * (1 - Math.max((pulse - 0.5) * 2, 0))
-      : Math.min(pulse * 2, 1)
-    const scale = 1 + (1 - pulse) * 0.3
-    ctx.globalAlpha = alpha
-    ctx.save()
-    ctx.translate(r(195), ry(elevY + elevH / 2))
-    ctx.scale(scale, scale)
-    ctx.fillStyle = label === 'GO!' ? GREEN : WHITE
-    ctx.font = `900 ${r(label === 'GO!' ? 52 : 72)}px -apple-system, sans-serif`
+    ctx.font = `700 ${r(44)}px -apple-system, sans-serif`
     ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillText(label, 0, 0)
-    ctx.textBaseline = 'alphabetic'
-    ctx.restore()
+    ctx.fillText(formatTime(countedTime), r(195), ry(STATS_Y + 50))
+    ctx.fillStyle = MUTED
+    ctx.font = `400 ${r(10)}px -apple-system, sans-serif`
+    ctx.fillText('MOVING TIME', r(195), ry(STATS_Y + 64))
+
+    const subY = STATS_Y + 78
+    const thirdW = 390 / 3
+    const countedDist = countUpNum(activity.distanceMetres, statsT)
+    const countedElev = countUpNum(activity.totalElevationGain, statsT)
+
+    ctx.strokeStyle = BORDER; ctx.lineWidth = 1
+    ctx.beginPath(); ctx.moveTo(r(thirdW), ry(subY)); ctx.lineTo(r(thirdW), ry(subY + 48)); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(r(thirdW * 2), ry(subY)); ctx.lineTo(r(thirdW * 2), ry(subY + 48)); ctx.stroke()
+
+    ctx.fillStyle = WHITE
+    ctx.font = `700 ${r(22)}px -apple-system, sans-serif`
+    ctx.textAlign = 'center'
+    ctx.fillText(formatDistance(countedDist), r(thirdW * 0.5), ry(subY + 26))
+    ctx.fillText(`${Math.round(countedElev)}m`, r(thirdW * 1.5), ry(subY + 26))
+    ctx.fillText(`${(activity.averageSpeedKph ?? 0).toFixed(1)}`, r(thirdW * 2.5), ry(subY + 26))
+
+    ctx.fillStyle = MUTED
+    ctx.font = `400 ${r(9)}px -apple-system, sans-serif`
+    ctx.fillText('DISTANCE', r(thirdW * 0.5), ry(subY + 42))
+    ctx.fillText('ELEVATION', r(thirdW * 1.5), ry(subY + 42))
+    ctx.fillText('AVG KM/H', r(thirdW * 2.5), ry(subY + 42))
     ctx.globalAlpha = 1
   }
 
-  // Racing dot
+  // Racing dot + trail
   if (raceT > 0) {
     const trailEnd = Math.floor(raceT * (activity.points.length - 1))
     if (trailEnd > 0) {
@@ -365,87 +334,108 @@ function drawActivityCard(
       for (let i = 0; i <= trailEnd; i++) {
         const p = activity.points[i]
         const x = r(elevPad + p.distancePct * elevW)
-        const y = ry(elevY + elevH - ((p.elevationMetres - minElev) / elevRange) * elevH)
+        const y = ry(ELEV_Y + ELEV_H - ((p.elevationMetres - minElev) / elevRange) * ELEV_H)
         i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)
       }
-      ctx.strokeStyle = 'rgba(252,76,2,0.8)'
-      ctx.lineWidth = r(2.5); ctx.lineJoin = 'round'; ctx.stroke()
+      ctx.strokeStyle = 'rgba(255,255,255,0.65)'
+      ctx.lineWidth = r(2); ctx.lineJoin = 'round'; ctx.stroke()
     }
 
     const pt = getPointAt(activity.points, raceT)
     const dotX = r(elevPad + pt.distancePct * elevW)
-    const dotY = ry(elevY + elevH - ((pt.elevationMetres - minElev) / elevRange) * elevH)
-    const glow = ctx.createRadialGradient(dotX, dotY, 0, dotX, dotY, r(12))
-    glow.addColorStop(0, 'rgba(252,76,2,0.6)'); glow.addColorStop(1, 'rgba(252,76,2,0)')
-    ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(dotX, dotY, r(12), 0, Math.PI * 2); ctx.fill()
-    ctx.fillStyle = ORANGE; ctx.beginPath(); ctx.arc(dotX, dotY, r(5), 0, Math.PI * 2); ctx.fill()
-    ctx.strokeStyle = WHITE; ctx.lineWidth = r(1.5); ctx.stroke()
+    const dotY = ry(ELEV_Y + ELEV_H - ((pt.elevationMetres - minElev) / elevRange) * ELEV_H)
+
+    const glow = ctx.createRadialGradient(dotX, dotY, 0, dotX, dotY, r(14))
+    glow.addColorStop(0, 'rgba(255,255,255,0.5)')
+    glow.addColorStop(1, 'rgba(255,255,255,0)')
+    ctx.fillStyle = glow
+    ctx.beginPath(); ctx.arc(dotX, dotY, r(14), 0, Math.PI * 2); ctx.fill()
+    ctx.fillStyle = WHITE
+    ctx.beginPath(); ctx.arc(dotX, dotY, r(6), 0, Math.PI * 2); ctx.fill()
+    ctx.strokeStyle = ORANGE; ctx.lineWidth = r(2); ctx.stroke()
   }
 
-  // Live stats during race
-  const liveY = gradeY + gradeH + 28
-  const liveAlpha = raceT > 0 ? Math.min(raceT * 4, 1) : 0
+  // Live rolling counters
+  if (raceT > 0) {
+    ctx.globalAlpha = Math.min(raceT * 5, 1)
 
-  if (liveAlpha > 0) {
-    ctx.globalAlpha = liveAlpha
     const pt = getPointAt(activity.points, raceT)
-    const liveItems = [
-      { label: 'LIVE SPEED', value: pt.speedKph.toFixed(1), sub: `km/h · ${formatPace(pt.speedKph)}` },
-      ...(pt.heartRate != null ? [{ label: 'LIVE HR', value: `${Math.round(pt.heartRate)}`, sub: 'bpm' }] : []),
-      ...(pt.powerWatts != null ? [{ label: 'LIVE POWER', value: `${Math.round(pt.powerWatts)}`, sub: `W${!activity.hasPower ? ' est.' : ''}` }] : []),
+
+    ctx.strokeStyle = BORDER; ctx.lineWidth = 1
+    ctx.beginPath(); ctx.moveTo(0, ry(LIVE_Y - 2)); ctx.lineTo(W, ry(LIVE_Y - 2)); ctx.stroke()
+
+    const liveStats: { label: string; value: string; sub: string }[] = [
+      { label: 'SPEED', value: pt.speedKph.toFixed(1), sub: formatPace(pt.speedKph) },
     ]
-    const colW = 390 / liveItems.length
-    liveItems.forEach((item, i) => {
+    if (pt.heartRate != null) {
+      liveStats.push({ label: 'HEART RATE', value: `${Math.round(pt.heartRate)}`, sub: 'bpm' })
+    }
+    if (pt.powerWatts != null) {
+      liveStats.push({ label: 'POWER', value: `${Math.round(pt.powerWatts)}`, sub: `W${!activity.hasPower ? ' est.' : ''}` })
+    }
+
+    const colW = 390 / liveStats.length
+    liveStats.forEach((stat, i) => {
       const cx = i * colW
       if (i > 0) {
         ctx.strokeStyle = BORDER; ctx.lineWidth = 1
-        ctx.beginPath(); ctx.moveTo(r(cx), ry(liveY)); ctx.lineTo(r(cx), ry(liveY + 58)); ctx.stroke()
+        ctx.beginPath(); ctx.moveTo(r(cx), ry(LIVE_Y)); ctx.lineTo(r(cx), ry(LIVE_Y + 70)); ctx.stroke()
       }
-      ctx.fillStyle = ORANGE; ctx.font = `bold ${r(9)}px -apple-system, sans-serif`; ctx.textAlign = 'left'
-      ctx.fillText(item.label, r(cx + PAD), ry(liveY + 12))
-      ctx.fillStyle = WHITE; ctx.font = `bold ${r(24)}px -apple-system, sans-serif`
-      ctx.fillText(item.value, r(cx + PAD), ry(liveY + 38))
-      ctx.fillStyle = DIM; ctx.font = `400 ${r(10)}px -apple-system, sans-serif`
-      ctx.fillText(item.sub, r(cx + PAD), ry(liveY + 52))
+      ctx.fillStyle = ORANGE
+      ctx.font = `600 ${r(9)}px -apple-system, sans-serif`
+      ctx.textAlign = 'left'
+      ctx.fillText(stat.label, r(cx + PAD), ry(LIVE_Y + 14))
+      ctx.fillStyle = WHITE
+      ctx.font = `700 ${r(28)}px -apple-system, sans-serif`
+      ctx.fillText(stat.value, r(cx + PAD), ry(LIVE_Y + 44))
+      ctx.fillStyle = DIM
+      ctx.font = `400 ${r(10)}px -apple-system, sans-serif`
+      ctx.fillText(stat.sub, r(cx + PAD), ry(LIVE_Y + 58))
     })
 
-    // Distance + elevation gain counters
-    const counterY = liveY + 64
+    // Distance / elevation / remaining
+    const counterY = LIVE_Y + 74
     ctx.strokeStyle = BORDER; ctx.lineWidth = 1
     ctx.beginPath(); ctx.moveTo(0, ry(counterY)); ctx.lineTo(W, ry(counterY)); ctx.stroke()
 
     const distSoFar = pt.distanceMetres
     const elevSoFar = pt.elevationGainMetres
+    const remaining = Math.max(0, activity.distanceMetres - distSoFar)
 
-    ctx.fillStyle = MUTED; ctx.font = `400 ${r(9)}px -apple-system, sans-serif`; ctx.textAlign = 'left'
-    ctx.fillText('DISTANCE', r(PAD + 4), ry(counterY + 12))
-    ctx.fillStyle = WHITE; ctx.font = `bold ${r(16)}px -apple-system, sans-serif`
-    ctx.fillText(formatDistance(distSoFar), r(PAD + 4), ry(counterY + 28))
-
-    ctx.fillStyle = MUTED; ctx.font = `400 ${r(9)}px -apple-system, sans-serif`; ctx.textAlign = 'center'
-    ctx.fillText('ELEVATION GAIN', r(195), ry(counterY + 12))
-    ctx.fillStyle = WHITE; ctx.font = `bold ${r(16)}px -apple-system, sans-serif`
-    ctx.fillText(`${Math.round(elevSoFar)}m`, r(195), ry(counterY + 28))
-
-    ctx.fillStyle = MUTED; ctx.font = `400 ${r(9)}px -apple-system, sans-serif`; ctx.textAlign = 'right'
-    ctx.fillText('REMAINING', r(390 - PAD), ry(counterY + 12))
-    ctx.fillStyle = WHITE; ctx.font = `bold ${r(16)}px -apple-system, sans-serif`
-    ctx.fillText(formatDistance(activity.distanceMetres - distSoFar), r(390 - PAD), ry(counterY + 28))
+    const counterItems = [
+      { label: 'DISTANCE', value: formatDistance(distSoFar), align: 'left' as const, x: PAD + 4 },
+      { label: 'ELEV GAIN', value: `${Math.round(elevSoFar)}m`, align: 'center' as const, x: 195 },
+      { label: 'REMAINING', value: formatDistance(remaining), align: 'right' as const, x: 390 - PAD - 4 },
+    ]
+    counterItems.forEach(item => {
+      ctx.fillStyle = MUTED
+      ctx.font = `400 ${r(9)}px -apple-system, sans-serif`
+      ctx.textAlign = item.align
+      ctx.fillText(item.label, r(item.x), ry(counterY + 14))
+      ctx.fillStyle = WHITE
+      ctx.font = `700 ${r(18)}px -apple-system, sans-serif`
+      ctx.fillText(item.value, r(item.x), ry(counterY + 32))
+    })
 
     ctx.globalAlpha = 1
   }
 
   // Footer
   const footAlpha = holdT > 0 ? easeInOut(holdT) : (raceT > 0.85 ? (raceT - 0.85) / 0.15 : 0)
-  const footY = 686
-  ctx.globalAlpha = footAlpha
-  ctx.strokeStyle = BORDER; ctx.lineWidth = 1
-  ctx.beginPath(); ctx.moveTo(0, ry(footY)); ctx.lineTo(W, ry(footY)); ctx.stroke()
-  ctx.fillStyle = '#555555'; ctx.font = `700 ${r(11)}px -apple-system, sans-serif`; ctx.textAlign = 'left'
-  ctx.fillText('SEGMENTIQ', r(PAD), ry(footY + 12))
-  ctx.fillStyle = '#444444'; ctx.font = `400 ${r(10)}px -apple-system, sans-serif`; ctx.textAlign = 'right'
-  ctx.fillText('segmentiq.vercel.app', r(390 - PAD), ry(footY + 12))
-  ctx.globalAlpha = 1
+  if (footAlpha > 0) {
+    ctx.globalAlpha = footAlpha
+    ctx.strokeStyle = BORDER; ctx.lineWidth = 1
+    ctx.beginPath(); ctx.moveTo(0, ry(FOOTER_Y)); ctx.lineTo(W, ry(FOOTER_Y)); ctx.stroke()
+    ctx.fillStyle = '#555555'
+    ctx.font = `700 ${r(11)}px -apple-system, sans-serif`
+    ctx.textAlign = 'left'
+    ctx.fillText('SEGMENTIQ', r(PAD), ry(FOOTER_Y + 12))
+    ctx.fillStyle = '#444444'
+    ctx.font = `400 ${r(10)}px -apple-system, sans-serif`
+    ctx.textAlign = 'right'
+    ctx.fillText('segmentiq.vercel.app', r(390 - PAD), ry(FOOTER_Y + 12))
+    ctx.globalAlpha = 1
+  }
 }
 
 function ActivityReplay({ activity }: { activity: NormalisedActivity }) {
@@ -466,12 +456,6 @@ function ActivityReplay({ activity }: { activity: NormalisedActivity }) {
 
   const PREVIEW_DURATION = 15000
   const EXPORT_DURATION = 30000
-  const PREVIEW_W = 390
-  const PREVIEW_H = 700
-  const EXPORT_W = 1080
-  const EXPORT_H = 1920
-  const EXPORT_SCALE = 1080 / 390
-  const EXPORT_SAFE_TOP = 250
 
   const drawFrame = useCallback((t: number, exportMode = false) => {
     const canvas = canvasRef.current
@@ -484,17 +468,17 @@ function ActivityReplay({ activity }: { activity: NormalisedActivity }) {
     const elevRange = elevRangeRef.current
 
     if (exportMode) {
-      canvas.width = EXPORT_W
-      canvas.height = EXPORT_H
+      canvas.width = 1080
+      canvas.height = 1920
     } else {
-      canvas.width = PREVIEW_W
-      canvas.height = PREVIEW_H
+      canvas.width = 390
+      canvas.height = 700
     }
 
     const W = canvas.width
     const H = canvas.height
-    const s = exportMode ? EXPORT_SCALE : 1
-    const safeTop = exportMode ? EXPORT_SAFE_TOP : 0
+    const sc = exportMode ? 1080 / 390 : 1
+    const safeTop = exportMode ? 250 : 0
 
     ctx.fillStyle = '#0a0a0a'
     ctx.fillRect(0, 0, W, H)
@@ -513,16 +497,20 @@ function ActivityReplay({ activity }: { activity: NormalisedActivity }) {
       ctx.fillRect(0, H - 250, W, 250)
     }
 
-    drawActivityCard(ctx, t, act, minElev, elevRange, s, W, H, safeTop)
+    drawActivityCard(ctx, t, act, minElev, elevRange, sc, W, H, safeTop)
   }, [])
 
-  const animate = useCallback((duration: number, startProgress: number, exportMode = false, onComplete?: () => void) => {
+  const animate = useCallback((
+    duration: number,
+    startProgress: number,
+    exportMode = false,
+    onComplete?: () => void
+  ) => {
     const startTime = performance.now()
-    const startT = startProgress
 
     function frame(now: number) {
       const elapsed = now - startTime
-      const t = Math.min(startT + elapsed / duration, 1)
+      const t = Math.min(startProgress + elapsed / duration, 1)
       progressRef.current = t
       if (!exportMode) setProgress(t)
       drawFrame(t, exportMode)
@@ -631,7 +619,9 @@ function ActivityReplay({ activity }: { activity: NormalisedActivity }) {
           onChange={e => seek(parseInt(e.target.value) / 100)}
           className="flex-1 accent-strava"
         />
-        <span className="text-text-muted text-xs w-8 text-right">{Math.round(progress * 15)}s</span>
+        <span className="text-text-muted text-xs w-8 text-right">
+          {Math.round(progress * 15)}s
+        </span>
       </div>
       <div className="mt-3 flex items-center gap-3">
         <button
@@ -676,7 +666,9 @@ function ActivityContent() {
         const res = await fetch(`/api/activities/${activityId}`, {
           headers: { 'x-session': session },
         })
-        if (res.status === 401) { localStorage.removeItem('session'); router.push('/'); return }
+        if (res.status === 401) {
+          localStorage.removeItem('session'); router.push('/'); return
+        }
         if (!res.ok) throw new Error('Failed to fetch activity')
         const json = await res.json()
         setActivity(json.data)
@@ -731,25 +723,36 @@ function ActivityContent() {
         <div className="grid grid-cols-2 gap-3 mb-6">
           <div className="bg-surface border border-border rounded-2xl p-4">
             <div className="text-text-muted text-xs mb-1">Moving time</div>
-            <div className="text-white font-semibold text-lg">{formatTime(activity.movingTimeSeconds)}</div>
-            <div className="text-text-muted text-xs mt-1">{formatDistance(activity.distanceMetres)}</div>
+            <div className="text-white font-semibold text-lg">
+              {formatTime(activity.movingTimeSeconds)}
+            </div>
+            <div className="text-text-muted text-xs mt-1">
+              {formatDistance(activity.distanceMetres)}
+            </div>
           </div>
           <div className="bg-surface border border-border rounded-2xl p-4">
             <div className="text-text-muted text-xs mb-1">Elevation gain</div>
-            <div className="text-white font-semibold text-lg">{Math.round(activity.totalElevationGain)}m</div>
+            <div className="text-white font-semibold text-lg">
+              {Math.round(activity.totalElevationGain)}m
+            </div>
             <div className="text-text-muted text-xs mt-1">
-              {activity.averageSpeedKph != null ? `${activity.averageSpeedKph.toFixed(1)} km/h avg` : ''}
+              {activity.averageSpeedKph != null
+                ? `${activity.averageSpeedKph.toFixed(1)} km/h avg` : ''}
             </div>
           </div>
         </div>
 
-        {(activity.averageHeartRate != null || activity.averagePowerWatts != null || activity.averageCadence != null) && (
+        {(activity.averageHeartRate != null ||
+          activity.averagePowerWatts != null ||
+          activity.averageCadence != null) && (
           <div className="bg-surface border border-border rounded-2xl px-4 py-3 mb-6">
             <div className="grid grid-cols-3 gap-4">
               {activity.averageHeartRate != null && (
                 <div className="text-center">
                   <div className="text-text-muted text-xs mb-1">Avg HR</div>
-                  <div className="text-white text-sm font-medium">{Math.round(activity.averageHeartRate)} bpm</div>
+                  <div className="text-white text-sm font-medium">
+                    {Math.round(activity.averageHeartRate)} bpm
+                  </div>
                   {activity.maxHeartRate != null && (
                     <div className="text-text-muted text-xs">max {activity.maxHeartRate}</div>
                   )}
@@ -762,14 +765,18 @@ function ActivityContent() {
                     {Math.round(activity.averagePowerWatts)}W{!activity.hasPower ? ' est.' : ''}
                   </div>
                   {activity.normalisedPowerWatts != null && (
-                    <div className="text-text-muted text-xs">NP {activity.normalisedPowerWatts}W</div>
+                    <div className="text-text-muted text-xs">
+                      NP {activity.normalisedPowerWatts}W
+                    </div>
                   )}
                 </div>
               )}
               {activity.averageCadence != null && (
                 <div className="text-center">
                   <div className="text-text-muted text-xs mb-1">Avg cadence</div>
-                  <div className="text-white text-sm font-medium">{Math.round(activity.averageCadence)} rpm</div>
+                  <div className="text-white text-sm font-medium">
+                    {Math.round(activity.averageCadence)} rpm
+                  </div>
                 </div>
               )}
             </div>
