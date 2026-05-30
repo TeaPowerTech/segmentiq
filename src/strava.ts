@@ -235,3 +235,38 @@ export async function fetchSegmentEfforts(
   )
   return efforts.sort((a: any, b: any) => a.elapsed_time - b.elapsed_time)
 }
+// ─── Activity list ────────────────────────────────────────────────────────────
+
+export async function fetchRecentActivities(athleteId: number, page = 1, perPage = 30): Promise<any[]> {
+  const token = await getValidToken(athleteId)
+  const res = await fetchWithRetry(
+    `https://www.strava.com/api/v3/athlete/activities?page=${page}&per_page=${perPage}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  )
+  if (!res.ok) await throwStravaError(res)
+  const text = await res.text()
+  return JSON.parse(parseStravaJson(text))
+}
+
+export async function fetchActivity(athleteId: number, activityId: string): Promise<any> {
+  const token = await getValidToken(athleteId)
+  const res = await fetchWithRetry(
+    `https://www.strava.com/api/v3/activities/${activityId}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  )
+  if (!res.ok) await throwStravaError(res)
+  const text = await res.text()
+  return JSON.parse(parseStravaJson(text))
+}
+
+export async function fetchActivityStreams(athleteId: number, activityId: string): Promise<any> {
+  const token = await getValidToken(athleteId)
+  const keys = 'time,distance,altitude,heartrate,watts,cadence,velocity_smooth,latlng'
+  const res = await fetchWithRetry(
+    `https://www.strava.com/api/v3/activities/${activityId}/streams?keys=${keys}&key_by_type=true`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  )
+  if (!res.ok) await throwStravaError(res)
+  const text = await res.text()
+  return JSON.parse(parseStravaJson(text))
+}
