@@ -116,6 +116,67 @@ function ScaledChart({ pointsA, pointsB, getValue }: {
   )
 }
 
+// ─── Utility functions ────────────────────────────────────────────────────────
+
+function getPointAt(effort: NormalisedEffort, t: number): EffortPoint {
+  const idx = Math.min(Math.floor(t * (effort.points.length - 1)), effort.points.length - 2)
+  const frac = t * (effort.points.length - 1) - idx
+  const a = effort.points[idx]
+  const b = effort.points[idx + 1]
+  return {
+    distancePct: a.distancePct + (b.distancePct - a.distancePct) * frac,
+    heartRate: a.heartRate != null && b.heartRate != null
+      ? a.heartRate + (b.heartRate - a.heartRate) * frac : null,
+    speedKph: a.speedKph + (b.speedKph - a.speedKph) * frac,
+    powerWatts: a.powerWatts != null && b.powerWatts != null
+      ? a.powerWatts + (b.powerWatts - a.powerWatts) * frac : null,
+    elevationMetres: a.elevationMetres + (b.elevationMetres - a.elevationMetres) * frac,
+    elevationGainMetres: a.elevationGainMetres + (b.elevationGainMetres - a.elevationGainMetres) * frac,
+  }
+}
+
+function avgUpTo(effort: NormalisedEffort, t: number, getValue: (p: EffortPoint) => number | null): number | null {
+  const endIdx = Math.floor(t * (effort.points.length - 1))
+  const slice = effort.points.slice(0, endIdx + 1)
+  const vals = slice.map(getValue).filter((v): v is number => v != null)
+  if (vals.length === 0) return null
+  return vals.reduce((s, v) => s + v, 0) / vals.length
+}
+
+// Normalised power: 4th root of mean of 30s rolling avg of power^4
+// Window approximated as proportion of effort duration
+function normalisedPowerUpTo(effort: NormalisedEffort, t: number): number | null {
+  const endIdx = Math.floor(t * (effort.points.length - 1))
+  if (endIdx < 2) return null
+  const slice = effort.points.slice(0, endIdx + 1)
+  const powers = slice.map(p => p.powerWatts).filter((v): v is number => v != null)
+  if (powers.length < 2) return null
+
+  // Rolling window = ~30s worth of points proportional to effort length
+  const windowSize = Math.max(2, Math.round((30 / effort.elapsedSeconds) * effort.points.length))
+  const rollingAvgs: number[] = []
+
+  for (let i = windowSize - 1; i < powers.length; i++) {
+    const window = powers.slice(i - windowSize + 1, i + 1)
+    const avg = window.reduce((s, v) => s + v, 0) / window.length
+    rollingAvgs.push(avg)
+  }
+
+  if (rollingAvgs.length === 0) return null
+  const mean4th = rollingAvgs.reduce((s, v) => s + Math.pow(v, 4), 0) / rollingAvgs.length
+  return Math.round(Math.pow(mean4th, 0.25))
+}
+
+// Ease in-out for smooth animations
+function easeInOut(t: number): number {
+  return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t
+}
+
+// Count up a time value
+function countUpTime(target: number, t: number): number {
+  return Math.floor(target * Math.min(t, 1))
+}
+
 interface SegmentReplayProps {
   effortA: NormalisedEffort
   effortB: NormalisedEffort | null
@@ -132,7 +193,6 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
 
-  // Store all props in refs so drawFrame never has stale closures
   const effortARef = useRef(effortA)
   const effortBRef = useRef(effortB)
   const summaryARef = useRef(summaryA)
@@ -150,6 +210,13 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
   const PREVIEW_DURATION = 15000
   const EXPORT_DURATION = 30000
 
+  // Animation phases (as fraction of total duration)
+  const PHASE_HEADER_END = 0.10   // 0–10%: header fade in
+  const PHASE_TIMES_END = 0.30    // 10–30%: times count up
+  const PHASE_DELTA_END = 0.42    // 30–42%: delta banner slides in
+  const PHASE_RACE_END = 0.90     // 42–90%: dots race, bars animate
+  // 90–100%: hold + branding pulse
+
   const drawFrame = useCallback((t: number) => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -163,216 +230,467 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
     const minElev = minElevRef.current
     const elevRange = elevRangeRef.current
 
-    const W = canvas.width
-    const H = canvas.height
-    const PAD = { top: 20, right: 20, bottom: 80, left: 20 }
-    const chartW = W - PAD.left - PAD.right
-    const chartH = H - PAD.top - PAD.bottom
+    const W = 390
+    const H = 700
+    canvas.width = W
+    canvas.height = H
 
-    ctx.fillStyle = '#0a0a0a'
+    const BG = '#0a0a0a'
+    const SURFACE = '#111111'
+    const BORDER = '#1e1e1e'
+    const ORANGE = '#FC4C02'
+    const BLUE = '#60A5FA'
+    const WHITE = '#ffffff'
+    const MUTED = '#888888'
+    const DIM = '#444444'
+    const DIMMER = '#2a2a2a'
+    const GREEN = '#22C55E'
+    const RED = '#EF4444'
+    const GOLD = '#EAB308'
+
+    function roundRect(x: number, y: number, w: number, h: number, r: number) {
+      ctx.beginPath()
+      ctx.moveTo(x + r, y)
+      ctx.lineTo(x + w - r, y)
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r)
+      ctx.lineTo(x + w, y + h - r)
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h)
+      ctx.lineTo(x + r, y + h)
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r)
+      ctx.lineTo(x, y + r)
+      ctx.quadraticCurveTo(x, y, x + r, y)
+      ctx.closePath()
+    }
+
+    // Background
+    ctx.fillStyle = BG
     ctx.fillRect(0, 0, W, H)
 
-    ctx.fillStyle = '#FC4C02'
-    ctx.fillRect(0, 0, 3, H)
+    // Orange left accent
+    ctx.fillStyle = ORANGE
+    ctx.fillRect(0, 0, 4, H)
 
-    const elevPts = eA.points.map((p, i) => ({
-      x: PAD.left + (i / (eA.points.length - 1)) * chartW,
-      y: PAD.top + chartH - ((p.elevationMetres - minElev) / elevRange) * chartH,
-    }))
+    // ─── Phase progress ───────────────────────────────────────────────────────
+    const headerAlpha = Math.min(t / PHASE_HEADER_END, 1)
+    const timesT = t < PHASE_HEADER_END ? 0 : Math.min((t - PHASE_HEADER_END) / (PHASE_TIMES_END - PHASE_HEADER_END), 1)
+    const deltaT = t < PHASE_TIMES_END ? 0 : Math.min((t - PHASE_TIMES_END) / (PHASE_DELTA_END - PHASE_TIMES_END), 1)
+    const raceT = t < PHASE_DELTA_END ? 0 : Math.min((t - PHASE_DELTA_END) / (PHASE_RACE_END - PHASE_DELTA_END), 1)
+    const holdT = t < PHASE_RACE_END ? 0 : Math.min((t - PHASE_RACE_END) / (1 - PHASE_RACE_END), 1)
 
-    const grad = ctx.createLinearGradient(0, PAD.top, 0, PAD.top + chartH)
-    grad.addColorStop(0, 'rgba(252,76,2,0.25)')
-    grad.addColorStop(1, 'rgba(252,76,2,0.03)')
+    // ─── Header ───────────────────────────────────────────────────────────────
+    ctx.globalAlpha = headerAlpha
+    ctx.fillStyle = SURFACE
+    ctx.fillRect(0, 0, W, 58)
+    ctx.strokeStyle = BORDER
+    ctx.lineWidth = 1
     ctx.beginPath()
-    ctx.moveTo(elevPts[0].x, PAD.top + chartH)
-    elevPts.forEach(p => ctx.lineTo(p.x, p.y))
-    ctx.lineTo(elevPts[elevPts.length - 1].x, PAD.top + chartH)
-    ctx.closePath()
-    ctx.fillStyle = grad
-    ctx.fill()
-
-    ctx.beginPath()
-    elevPts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y))
-    ctx.strokeStyle = '#FC4C02'
-    ctx.lineWidth = 2
-    ctx.lineJoin = 'round'
+    ctx.moveTo(0, 58)
+    ctx.lineTo(W, 58)
     ctx.stroke()
 
-    const tA = Math.min(t, 1)
-    const ratioB = eB ? eB.elapsedSeconds / eA.elapsedSeconds : 1
-    const tB = eB ? Math.min(t / ratioB, 1) : 1
+    ctx.fillStyle = MUTED
+    ctx.font = '400 11px -apple-system, sans-serif'
+    ctx.textAlign = 'left'
+    ctx.fillText(eA.segment.name.toUpperCase(), 20, 26)
 
-    function getPointAt(effort: NormalisedEffort, t: number): EffortPoint {
-      const idx = Math.min(Math.floor(t * (effort.points.length - 1)), effort.points.length - 2)
-      const frac = t * (effort.points.length - 1) - idx
-      const a = effort.points[idx]
-      const b = effort.points[idx + 1]
-      return {
-        distancePct: a.distancePct + (b.distancePct - a.distancePct) * frac,
-        heartRate: a.heartRate != null && b.heartRate != null
-          ? a.heartRate + (b.heartRate - a.heartRate) * frac : null,
-        speedKph: a.speedKph + (b.speedKph - a.speedKph) * frac,
-        powerWatts: a.powerWatts != null && b.powerWatts != null
-          ? a.powerWatts + (b.powerWatts - a.powerWatts) * frac : null,
-        elevationMetres: a.elevationMetres + (b.elevationMetres - a.elevationMetres) * frac,
-        elevationGainMetres: a.elevationGainMetres + (b.elevationGainMetres - a.elevationGainMetres) * frac,
+    ctx.fillStyle = WHITE
+    ctx.font = '600 13px -apple-system, sans-serif'
+    ctx.fillText(
+      `${eA.segment.distanceMetres >= 1000
+        ? (eA.segment.distanceMetres / 1000).toFixed(1) + 'km'
+        : Math.round(eA.segment.distanceMetres) + 'm'} · ${eA.segment.averageGradePct}% avg grade`,
+      20, 44
+    )
+
+    ctx.fillStyle = DIM
+    ctx.font = '600 11px -apple-system, sans-serif'
+    ctx.textAlign = 'right'
+    ctx.fillText('SEGMENTIQ', W - 20, 35)
+    ctx.globalAlpha = 1
+
+    // ─── Times row ────────────────────────────────────────────────────────────
+    const timesY = 58
+    const halfW = W / 2
+    const timesAlpha = Math.min(timesT * 3, 1)
+
+    ctx.globalAlpha = timesAlpha
+    ctx.strokeStyle = BORDER
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(halfW, timesY)
+    ctx.lineTo(halfW, timesY + 110)
+    ctx.stroke()
+
+    // Effort A time counting up
+    const countedA = countUpTime(eA.elapsedSeconds, easeInOut(timesT))
+    ctx.fillStyle = BLUE
+    ctx.font = '500 10px -apple-system, sans-serif'
+    ctx.textAlign = 'left'
+    ctx.fillText('EFFORT A', 20, timesY + 20)
+    ctx.fillStyle = BLUE
+    ctx.font = '700 36px -apple-system, sans-serif'
+    ctx.fillText(formatTime(countedA), 20, timesY + 58)
+    ctx.fillStyle = DIM
+    ctx.font = '400 11px -apple-system, sans-serif'
+    ctx.fillText(formatDate(eA.startDate), 20, timesY + 74)
+
+    if (eA.prRank === 1 && timesT > 0.8) {
+      const prAlpha = (timesT - 0.8) / 0.2
+      ctx.globalAlpha = timesAlpha * prAlpha
+      roundRect(20, timesY + 82, 28, 16, 8)
+      ctx.fillStyle = 'rgba(234,179,8,0.15)'
+      ctx.fill()
+      roundRect(20, timesY + 82, 28, 16, 8)
+      ctx.strokeStyle = 'rgba(234,179,8,0.3)'
+      ctx.lineWidth = 1
+      ctx.stroke()
+      ctx.fillStyle = GOLD
+      ctx.font = '600 9px -apple-system, sans-serif'
+      ctx.textAlign = 'center'
+      ctx.fillText('PR', 34, timesY + 94)
+      ctx.globalAlpha = timesAlpha
+    }
+
+    // Effort B time counting up
+    if (eB) {
+      const countedB = countUpTime(eB.elapsedSeconds, easeInOut(timesT))
+      ctx.fillStyle = ORANGE
+      ctx.font = '500 10px -apple-system, sans-serif'
+      ctx.textAlign = 'left'
+      ctx.fillText('EFFORT B', halfW + 20, timesY + 20)
+      ctx.fillStyle = ORANGE
+      ctx.font = '700 36px -apple-system, sans-serif'
+      ctx.fillText(formatTime(countedB), halfW + 20, timesY + 58)
+      ctx.fillStyle = DIM
+      ctx.font = '400 11px -apple-system, sans-serif'
+      ctx.fillText(formatDate(eB.startDate), halfW + 20, timesY + 74)
+
+      if (eB.prRank === 1 && timesT > 0.8) {
+        const prAlpha = (timesT - 0.8) / 0.2
+        ctx.globalAlpha = timesAlpha * prAlpha
+        roundRect(halfW + 20, timesY + 82, 28, 16, 8)
+        ctx.fillStyle = 'rgba(234,179,8,0.15)'
+        ctx.fill()
+        roundRect(halfW + 20, timesY + 82, 28, 16, 8)
+        ctx.strokeStyle = 'rgba(234,179,8,0.3)'
+        ctx.lineWidth = 1
+        ctx.stroke()
+        ctx.fillStyle = GOLD
+        ctx.font = '600 9px -apple-system, sans-serif'
+        ctx.textAlign = 'center'
+        ctx.fillText('PR', halfW + 34, timesY + 94)
+        ctx.globalAlpha = timesAlpha
       }
     }
+    ctx.globalAlpha = 1
 
-    function avgSpeedAt(effort: NormalisedEffort, t: number): number {
-      const endIdx = Math.floor(t * (effort.points.length - 1))
-      const slice = effort.points.slice(0, endIdx + 1)
-      if (slice.length === 0) return 0
-      return slice.reduce((s, p) => s + p.speedKph, 0) / slice.length
-    }
+    // ─── Delta banner ─────────────────────────────────────────────────────────
+    const timeDelta = eB ? eA.elapsedSeconds - eB.elapsedSeconds : 0
+    const deltaColour = timeDelta < 0 ? GREEN : timeDelta > 0 ? RED : WHITE
+    const deltaSlide = easeInOut(deltaT)
 
-    const trailAEnd = Math.floor(tA * (eA.points.length - 1))
-    if (trailAEnd > 0) {
+    if (deltaT > 0) {
+      ctx.globalAlpha = deltaSlide
+      const deltaBgColour = timeDelta < 0
+        ? 'rgba(34,197,94,0.08)'
+        : timeDelta > 0
+        ? 'rgba(239,68,68,0.08)'
+        : 'rgba(255,255,255,0.04)'
+      ctx.fillStyle = deltaBgColour
+      ctx.fillRect(0, timesY + 110, W, 36)
+      ctx.strokeStyle = BORDER
+      ctx.lineWidth = 1
       ctx.beginPath()
-      for (let i = 0; i <= trailAEnd; i++) {
-        const p = eA.points[i]
-        const x = PAD.left + p.distancePct * chartW
-        const y = PAD.top + chartH - ((p.elevationMetres - minElev) / elevRange) * chartH
-        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)
-      }
-      ctx.strokeStyle = 'rgba(96,165,250,0.5)'
-      ctx.lineWidth = 3
+      ctx.moveTo(0, timesY + 110)
+      ctx.lineTo(W, timesY + 110)
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.moveTo(0, timesY + 146)
+      ctx.lineTo(W, timesY + 146)
+      ctx.stroke()
+      ctx.fillStyle = deltaColour
+      ctx.font = '700 16px -apple-system, sans-serif'
+      ctx.textAlign = 'center'
+      ctx.fillText(
+        timeDelta === 0 ? 'Dead heat'
+          : `${timeDelta < 0 ? '▲' : '▼'} ${Math.abs(timeDelta)}s ${timeDelta < 0 ? '— A faster' : '— B faster'}`,
+        W / 2, timesY + 133
+      )
+      ctx.globalAlpha = 1
+    }
+
+    // ─── Elevation profile + dots ─────────────────────────────────────────────
+    const metY = timesY + 146
+    const elevStartY = metY + 8
+    const elevH = 100
+    const elevPad = 16
+    const elevW = W - elevPad * 2
+
+    if (raceT > 0 || deltaT >= 1) {
+      const elevAlpha = deltaT >= 1 ? Math.min((raceT + deltaT - 1) * 4, 1) : 0
+      ctx.globalAlpha = Math.max(elevAlpha, deltaT >= 1 ? 0.3 : 0)
+
+      const elevPts = eA.points.map((p, i) => ({
+        x: elevPad + (i / (eA.points.length - 1)) * elevW,
+        y: elevStartY + elevH - ((p.elevationMetres - minElev) / elevRange) * elevH,
+      }))
+
+      const grad = ctx.createLinearGradient(0, elevStartY, 0, elevStartY + elevH)
+      grad.addColorStop(0, 'rgba(252,76,2,0.2)')
+      grad.addColorStop(1, 'rgba(252,76,2,0.02)')
+      ctx.beginPath()
+      ctx.moveTo(elevPts[0].x, elevStartY + elevH)
+      elevPts.forEach(p => ctx.lineTo(p.x, p.y))
+      ctx.lineTo(elevPts[elevPts.length - 1].x, elevStartY + elevH)
+      ctx.closePath()
+      ctx.fillStyle = grad
+      ctx.fill()
+
+      ctx.beginPath()
+      elevPts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y))
+      ctx.strokeStyle = ORANGE
+      ctx.lineWidth = 1.5
       ctx.lineJoin = 'round'
       ctx.stroke()
+      ctx.globalAlpha = 1
     }
 
-    if (eB) {
-      const trailBEnd = Math.floor(tB * (eB.points.length - 1))
-      if (trailBEnd > 0) {
+    const tA = Math.min(raceT, 1)
+    const ratioB = eB ? eB.elapsedSeconds / eA.elapsedSeconds : 1
+    const tB = eB ? Math.min(raceT / ratioB, 1) : 1
+
+    if (raceT > 0) {
+      // Trail A
+      const trailAEnd = Math.floor(tA * (eA.points.length - 1))
+      if (trailAEnd > 0) {
         ctx.beginPath()
-        for (let i = 0; i <= trailBEnd; i++) {
-          const p = eB.points[i]
-          const x = PAD.left + p.distancePct * chartW
-          const elevY = PAD.top + chartH - ((p.elevationMetres - minElev) / elevRange) * chartH
-          i === 0 ? ctx.moveTo(x, elevY) : ctx.lineTo(x, elevY)
+        for (let i = 0; i <= trailAEnd; i++) {
+          const p = eA.points[i]
+          const x = elevPad + p.distancePct * elevW
+          const y = elevStartY + elevH - ((p.elevationMetres - minElev) / elevRange) * elevH
+          i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)
         }
-        ctx.strokeStyle = 'rgba(252,76,2,0.5)'
-        ctx.lineWidth = 3
+        ctx.strokeStyle = 'rgba(96,165,250,0.6)'
+        ctx.lineWidth = 2.5
         ctx.lineJoin = 'round'
         ctx.stroke()
       }
-    }
 
-    const ptA = getPointAt(eA, tA)
-    const dotAx = PAD.left + ptA.distancePct * chartW
-    const dotAy = PAD.top + chartH - ((ptA.elevationMetres - minElev) / elevRange) * chartH
-
-    const glowA = ctx.createRadialGradient(dotAx, dotAy, 0, dotAx, dotAy, 14)
-    glowA.addColorStop(0, 'rgba(96,165,250,0.4)')
-    glowA.addColorStop(1, 'rgba(96,165,250,0)')
-    ctx.fillStyle = glowA
-    ctx.beginPath()
-    ctx.arc(dotAx, dotAy, 14, 0, Math.PI * 2)
-    ctx.fill()
-
-    ctx.fillStyle = '#60A5FA'
-    ctx.beginPath()
-    ctx.arc(dotAx, dotAy, 6, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.strokeStyle = '#ffffff'
-    ctx.lineWidth = 2
-    ctx.stroke()
-
-    ctx.fillStyle = '#60A5FA'
-    ctx.font = 'bold 11px -apple-system, sans-serif'
-    ctx.textAlign = 'center'
-    ctx.fillText('A', dotAx, dotAy - 14)
-
-    if (eB) {
-      const ptB = getPointAt(eB, tB)
-      const dotBx = PAD.left + ptB.distancePct * chartW
-      const dotBy = PAD.top + chartH - ((ptB.elevationMetres - minElev) / elevRange) * chartH
-
-      const glowB = ctx.createRadialGradient(dotBx, dotBy, 0, dotBx, dotBy, 14)
-      glowB.addColorStop(0, 'rgba(252,76,2,0.4)')
-      glowB.addColorStop(1, 'rgba(252,76,2,0)')
-      ctx.fillStyle = glowB
-      ctx.beginPath()
-      ctx.arc(dotBx, dotBy, 14, 0, Math.PI * 2)
-      ctx.fill()
-
-      ctx.fillStyle = '#FC4C02'
-      ctx.beginPath()
-      ctx.arc(dotBx, dotBy, 6, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.strokeStyle = '#ffffff'
-      ctx.lineWidth = 2
-      ctx.stroke()
-
-      ctx.fillStyle = '#FC4C02'
-      ctx.font = 'bold 11px -apple-system, sans-serif'
-      ctx.textAlign = 'center'
-      ctx.fillText('B', dotBx, dotBy - 14)
-    }
-
-    const statsY = PAD.top + chartH + 12
-    const colW = W / (eB ? 2 : 1)
-
-    ctx.fillStyle = '#60A5FA'
-    ctx.font = 'bold 10px -apple-system, sans-serif'
-    ctx.textAlign = 'left'
-    ctx.fillText('EFFORT A', PAD.left, statsY + 12)
-
-    ctx.fillStyle = '#ffffff'
-    ctx.font = 'bold 18px -apple-system, sans-serif'
-    ctx.fillText(`${ptA.speedKph.toFixed(1)} km/h`, PAD.left, statsY + 32)
-
-    ctx.fillStyle = '#888888'
-    ctx.font = '10px -apple-system, sans-serif'
-    ctx.fillText(`avg ${avgSpeedAt(eA, tA).toFixed(1)} km/h`, PAD.left, statsY + 46)
-
-    if (ptA.powerWatts != null) {
-      ctx.fillStyle = '#EAB308'
-      ctx.font = '10px -apple-system, sans-serif'
-      ctx.fillText(`${Math.round(ptA.powerWatts)}W${!sA.device_watts ? ' est.' : ''}`, PAD.left, statsY + 60)
-    }
-
-    if (eB && sB) {
-      const ptB2 = getPointAt(eB, tB)
-
-      ctx.fillStyle = '#FC4C02'
-      ctx.font = 'bold 10px -apple-system, sans-serif'
-      ctx.textAlign = 'left'
-      ctx.fillText('EFFORT B', colW + PAD.left, statsY + 12)
-
-      ctx.fillStyle = '#ffffff'
-      ctx.font = 'bold 18px -apple-system, sans-serif'
-      ctx.fillText(`${ptB2.speedKph.toFixed(1)} km/h`, colW + PAD.left, statsY + 32)
-
-      ctx.fillStyle = '#888888'
-      ctx.font = '10px -apple-system, sans-serif'
-      ctx.fillText(`avg ${avgSpeedAt(eB, tB).toFixed(1)} km/h`, colW + PAD.left, statsY + 46)
-
-      if (ptB2.powerWatts != null) {
-        ctx.fillStyle = '#EAB308'
-        ctx.font = '10px -apple-system, sans-serif'
-        ctx.fillText(`${Math.round(ptB2.powerWatts)}W${!sB.device_watts ? ' est.' : ''}`, colW + PAD.left, statsY + 60)
+      // Trail B
+      if (eB) {
+        const trailBEnd = Math.floor(tB * (eB.points.length - 1))
+        if (trailBEnd > 0) {
+          ctx.beginPath()
+          for (let i = 0; i <= trailBEnd; i++) {
+            const p = eB.points[i]
+            const x = elevPad + p.distancePct * elevW
+            const y = elevStartY + elevH - ((p.elevationMetres - minElev) / elevRange) * elevH
+            i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)
+          }
+          ctx.strokeStyle = 'rgba(252,76,2,0.6)'
+          ctx.lineWidth = 2.5
+          ctx.lineJoin = 'round'
+          ctx.stroke()
+        }
       }
 
-      ctx.strokeStyle = '#1e1e1e'
+      // Dot A
+      const ptA = getPointAt(eA, tA)
+      const dotAx = elevPad + ptA.distancePct * elevW
+      const dotAy = elevStartY + elevH - ((ptA.elevationMetres - minElev) / elevRange) * elevH
+      const glowA = ctx.createRadialGradient(dotAx, dotAy, 0, dotAx, dotAy, 12)
+      glowA.addColorStop(0, 'rgba(96,165,250,0.5)')
+      glowA.addColorStop(1, 'rgba(96,165,250,0)')
+      ctx.fillStyle = glowA
+      ctx.beginPath()
+      ctx.arc(dotAx, dotAy, 12, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.fillStyle = BLUE
+      ctx.beginPath()
+      ctx.arc(dotAx, dotAy, 5, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.strokeStyle = WHITE
+      ctx.lineWidth = 1.5
+      ctx.stroke()
+      ctx.fillStyle = BLUE
+      ctx.font = 'bold 10px -apple-system, sans-serif'
+      ctx.textAlign = 'center'
+      ctx.fillText('A', dotAx, dotAy - 12)
+
+      // Dot B
+      if (eB) {
+        const ptB = getPointAt(eB, tB)
+        const dotBx = elevPad + ptB.distancePct * elevW
+        const dotBy = elevStartY + elevH - ((ptB.elevationMetres - minElev) / elevRange) * elevH
+        const glowB = ctx.createRadialGradient(dotBx, dotBy, 0, dotBx, dotBy, 12)
+        glowB.addColorStop(0, 'rgba(252,76,2,0.5)')
+        glowB.addColorStop(1, 'rgba(252,76,2,0)')
+        ctx.fillStyle = glowB
+        ctx.beginPath()
+        ctx.arc(dotBx, dotBy, 12, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.fillStyle = ORANGE
+        ctx.beginPath()
+        ctx.arc(dotBx, dotBy, 5, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.strokeStyle = WHITE
+        ctx.lineWidth = 1.5
+        ctx.stroke()
+        ctx.fillStyle = ORANGE
+        ctx.font = 'bold 10px -apple-system, sans-serif'
+        ctx.textAlign = 'center'
+        ctx.fillText('B', dotBx, dotBy - 12)
+      }
+    }
+
+    // ─── Animated stat bars ───────────────────────────────────────────────────
+    const barsStartY = elevStartY + elevH + 14
+    const barW = W - 40
+    const barMid = W / 2
+    const barAlpha = raceT > 0 ? Math.min(raceT * 4, 1) : 0
+
+    ctx.globalAlpha = barAlpha
+
+    const avgHrA = raceT > 0 ? avgUpTo(eA, tA, p => p.heartRate) : null
+    const avgHrB = raceT > 0 && eB ? avgUpTo(eB, tB, p => p.heartRate) : null
+    const avgSpeedA = raceT > 0 ? avgUpTo(eA, tA, p => p.speedKph) : null
+    const avgSpeedB = raceT > 0 && eB ? avgUpTo(eB, tB, p => p.speedKph) : null
+    const avgPowerA = raceT > 0 ? avgUpTo(eA, tA, p => p.powerWatts) : null
+    const avgPowerB = raceT > 0 && eB ? avgUpTo(eB, tB, p => p.powerWatts) : null
+    const npA = raceT > 0 ? normalisedPowerUpTo(eA, tA) : null
+    const npB = raceT > 0 && eB ? normalisedPowerUpTo(eB, tB) : null
+
+    let bY = barsStartY
+
+    function drawAnimBar(
+      label: string,
+      valA: number | null,
+      valB: number | null,
+      fmtA: string,
+      fmtB: string,
+      subA?: string,
+      subB?: string,
+    ) {
+      if (valA == null && valB == null) return
+
+      // Label
+      ctx.fillStyle = DIM
+      ctx.font = '400 10px -apple-system, sans-serif'
+      ctx.textAlign = 'center'
+      ctx.fillText(label, barMid, bY)
+
+      // Values
+      ctx.fillStyle = BLUE
+      ctx.font = '500 13px -apple-system, sans-serif'
+      ctx.textAlign = 'left'
+      ctx.fillText(valA != null ? fmtA : '—', 20, bY + 16)
+      if (subA) {
+        ctx.fillStyle = '#444'
+        ctx.font = '400 9px -apple-system, sans-serif'
+        ctx.fillText(subA, 20, bY + 27)
+      }
+
+      ctx.fillStyle = ORANGE
+      ctx.font = '500 13px -apple-system, sans-serif'
+      ctx.textAlign = 'right'
+      ctx.fillText(valB != null ? fmtB : '—', W - 20, bY + 16)
+      if (subB) {
+        ctx.fillStyle = '#444'
+        ctx.font = '400 9px -apple-system, sans-serif'
+        ctx.textAlign = 'right'
+        ctx.fillText(subB, W - 20, bY + 27)
+      }
+
+      // Bar track
+      const trackY = bY + (subA || subB ? 33 : 22)
+      ctx.fillStyle = BORDER
+      roundRect(20, trackY, barW, 5, 3)
+      ctx.fill()
+
+      // Animated bars push/pull from centre
+      const maxVal = Math.max(valA ?? 0, valB ?? 0)
+      const halfBar = barW / 2 - 2
+
+      if (valA != null && maxVal > 0) {
+        const wA = easeInOut(Math.min(raceT * 1.5, 1)) * (valA / maxVal) * halfBar
+        ctx.fillStyle = BLUE
+        roundRect(barMid - wA - 2, trackY, wA, 5, 2)
+        ctx.fill()
+      }
+
+      if (valB != null && maxVal > 0) {
+        const wB = easeInOut(Math.min(raceT * 1.5, 1)) * (valB / maxVal) * halfBar
+        ctx.fillStyle = ORANGE
+        roundRect(barMid + 2, trackY, wB, 5, 2)
+        ctx.fill()
+      }
+
+      bY += (subA || subB ? 48 : 36)
+
+      // Separator
+      ctx.strokeStyle = BORDER
       ctx.lineWidth = 1
       ctx.beginPath()
-      ctx.moveTo(colW, statsY)
-      ctx.lineTo(colW, H - 4)
+      ctx.moveTo(20, bY - 4)
+      ctx.lineTo(W - 20, bY - 4)
       ctx.stroke()
     }
 
-    ctx.fillStyle = '#333333'
-    ctx.font = '10px -apple-system, sans-serif'
-    ctx.textAlign = 'right'
-    ctx.fillText('SEGMENTIQ', W - PAD.right, statsY + 12)
+    drawAnimBar(
+      'AVG HR',
+      avgHrA, avgHrB,
+      avgHrA != null ? `${Math.round(avgHrA)} bpm` : '—',
+      avgHrB != null ? `${Math.round(avgHrB)} bpm` : '—',
+    )
 
-    ctx.fillStyle = '#2a2a2a'
-    ctx.font = '9px -apple-system, sans-serif'
-    ctx.fillText(eA.segment.name, W - PAD.right, statsY + 24)
+    drawAnimBar(
+      'AVG SPEED',
+      avgSpeedA, avgSpeedB,
+      avgSpeedA != null ? `${avgSpeedA.toFixed(1)} km/h` : '—',
+      avgSpeedB != null ? `${avgSpeedB.toFixed(1)} km/h` : '—',
+    )
+
+    const hasPower = avgPowerA != null || avgPowerB != null
+    if (hasPower) {
+      const npLabelA = npA != null ? `NP ${npA}W${!sA.device_watts ? ' est.' : ''}` : undefined
+      const npLabelB = npB != null ? `NP ${npB}W${!sB?.device_watts ? ' est.' : ''}` : undefined
+      drawAnimBar(
+        'AVG POWER',
+        avgPowerA, avgPowerB,
+        avgPowerA != null ? `${Math.round(avgPowerA)}W${!sA.device_watts ? ' est.' : ''}` : '—',
+        avgPowerB != null ? `${Math.round(avgPowerB)}W${!sB?.device_watts ? ' est.' : ''}` : '—',
+        npLabelA,
+        npLabelB,
+      )
+    }
+
+    ctx.globalAlpha = 1
+
+    // ─── Footer ───────────────────────────────────────────────────────────────
+    const footAlpha = holdT > 0 ? easeInOut(holdT) : (raceT > 0.8 ? (raceT - 0.8) / 0.2 : 0)
+    ctx.globalAlpha = footAlpha
+
+    ctx.strokeStyle = BORDER
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(0, H - 34)
+    ctx.lineTo(W, H - 34)
+    ctx.stroke()
+
+    ctx.fillStyle = DIMMER
+    ctx.font = '600 11px -apple-system, sans-serif'
+    ctx.textAlign = 'left'
+    ctx.fillText('SEGMENTIQ', 20, H - 14)
+
+    ctx.fillStyle = DIMMER
+    ctx.font = '400 10px -apple-system, sans-serif'
+    ctx.textAlign = 'right'
+    ctx.fillText('segmentiq.vercel.app', W - 20, H - 14)
+
+    ctx.globalAlpha = 1
 
   }, [])
-const animate = useCallback((duration: number, startProgress: number, onComplete?: () => void) => {
+  const animate = useCallback((duration: number, startProgress: number, onComplete?: () => void) => {
     const startTime = performance.now()
     const startT = startProgress
 
@@ -427,12 +745,12 @@ const animate = useCallback((duration: number, startProgress: number, onComplete
   useEffect(() => { drawFrame(0) }, [drawFrame])
   useEffect(() => { return () => cancelAnimationFrame(animFrameRef.current) }, [])
 
-  async function exportMp4() {
+  async function exportVideo() {
     const canvas = canvasRef.current
     if (!canvas) return
 
     if (!window.MediaRecorder || !MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
-      setExportError('MP4 export requires Chrome or Firefox. Safari is not supported.')
+      setExportError('Video export requires Chrome or Firefox. Safari is not supported.')
       return
     }
 
@@ -444,7 +762,7 @@ const animate = useCallback((duration: number, startProgress: number, onComplete
     const stream = canvas.captureStream(30)
     const recorder = new MediaRecorder(stream, {
       mimeType: 'video/webm;codecs=vp8',
-      videoBitsPerSecond: 4000000,
+      videoBitsPerSecond: 6000000,
     })
     const chunks: Blob[] = []
 
@@ -473,9 +791,9 @@ const animate = useCallback((duration: number, startProgress: number, onComplete
 
       <canvas
         ref={canvasRef}
-        width={640}
-        height={280}
-        style={{ borderRadius: '8px', maxWidth: '100%', display: 'block' }}
+        width={390}
+        height={700}
+        style={{ borderRadius: '8px', maxWidth: '100%', display: 'block', margin: '0 auto' }}
       />
 
       <div className="mt-3 flex items-center gap-3">
@@ -497,7 +815,7 @@ const animate = useCallback((duration: number, startProgress: number, onComplete
 
       <div className="mt-3 flex items-center gap-3">
         <button
-          onClick={exporting ? undefined : exportMp4}
+          onClick={exporting ? undefined : exportVideo}
           disabled={exporting}
           className={`flex-1 text-sm font-medium py-2.5 rounded-xl transition-colors ${
             exporting
@@ -505,7 +823,7 @@ const animate = useCallback((duration: number, startProgress: number, onComplete
               : 'bg-strava hover:bg-strava-dark text-white'
           }`}
         >
-          {exporting ? 'Recording… play will complete automatically' : '⬇ Export replay video'}
+          {exporting ? 'Recording… animation will complete automatically' : '⬇ Export replay video'}
         </button>
         <button
           onClick={restart}
@@ -520,7 +838,7 @@ const animate = useCallback((duration: number, startProgress: number, onComplete
       )}
 
       <div className="mt-2 text-xs text-text-muted">
-        Preview plays at 15s · Export records full 30s replay
+        Preview plays at 15s · Export records full 30s portrait video
       </div>
     </div>
   )
@@ -621,11 +939,9 @@ function drawExportCard(
   ctx.font = '500 10px -apple-system, sans-serif'
   ctx.textAlign = 'left'
   ctx.fillText('EFFORT A', 20, timesY + 20)
-
   ctx.fillStyle = BLUE
   ctx.font = '700 36px -apple-system, sans-serif'
   ctx.fillText(formatTime(effortA.elapsedSeconds), 20, timesY + 58)
-
   ctx.fillStyle = DIM
   ctx.font = '400 11px -apple-system, sans-serif'
   ctx.fillText(formatDate(effortA.startDate), 20, timesY + 74)
@@ -648,11 +964,9 @@ function drawExportCard(
   ctx.font = '500 10px -apple-system, sans-serif'
   ctx.textAlign = 'left'
   ctx.fillText('EFFORT B', halfW + 20, timesY + 20)
-
   ctx.fillStyle = ORANGE
   ctx.font = '700 36px -apple-system, sans-serif'
   ctx.fillText(formatTime(effortB.elapsedSeconds), halfW + 20, timesY + 58)
-
   ctx.fillStyle = DIM
   ctx.font = '400 11px -apple-system, sans-serif'
   ctx.fillText(formatDate(effortB.startDate), halfW + 20, timesY + 74)
@@ -694,8 +1008,7 @@ function drawExportCard(
   ctx.font = '700 16px -apple-system, sans-serif'
   ctx.textAlign = 'center'
   ctx.fillText(
-    timeDelta === 0
-      ? 'Dead heat'
+    timeDelta === 0 ? 'Dead heat'
       : `${timeDelta < 0 ? '▲' : '▼'} ${Math.abs(timeDelta)}s ${timeDelta < 0 ? '— A faster' : '— B faster'}`,
     W / 2, timesY + 133
   )
