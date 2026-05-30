@@ -1,20 +1,17 @@
-import {
-  fetchRecentActivities,
-  fetchActivity,
-  fetchActivityStreams,
-} from './strava'
-import { normaliseActivity } from './normalise'
 import express, { Request, Response } from 'express'
 import cookieParser from 'cookie-parser'
 import { Pool } from 'pg'
 import authRouter from './auth'
-import { normaliseEffort, computeComparison, NormaliseError } from './normalise'
+import { normaliseEffort, computeComparison, normaliseActivity, NormaliseError } from './normalise'
 import { EffortCache, createInMemoryCacheStore } from './cache'
 import {
   fetchEffort,
   fetchEffortStreams,
   fetchSegmentEfforts,
   fetchStarredSegments,
+  fetchRecentActivities,
+  fetchActivity,
+  fetchActivityStreams,
   StravaAuthError,
   StravaRateLimitError,
   StravaNotFoundError,
@@ -302,6 +299,66 @@ app.get('/api/efforts/:effortId', requireSession, async (req: any, res: Response
 
     return res.json({ data: normalised, cachedAt: null, cacheHit: false })
 
+  } catch (err) {
+    return handleError(err, res)
+  }
+})
+
+// ─── GET /api/activities ──────────────────────────────────────────────────────
+
+app.get('/api/activities', requireSession, async (req: any, res: Response) => {
+  try {
+    const page = parseInt((req.query.page as string) ?? '1', 10)
+    const activities = await fetchRecentActivities(req.athleteId, page, 30)
+    const safe = activities.map((a: any) => ({
+      id: String(a.id),
+      name: a.name,
+      type: a.type,
+      start_date: a.start_date,
+      distance: a.distance,
+      moving_time: a.moving_time,
+      elapsed_time: a.elapsed_time,
+      total_elevation_gain: a.total_elevation_gain,
+      average_speed: a.average_speed,
+      average_heartrate: a.average_heartrate ?? null,
+      max_heartrate: a.max_heartrate ?? null,
+      average_watts: a.average_watts ?? null,
+      device_watts: a.device_watts ?? false,
+      achievement_count: a.achievement_count ?? 0,
+      pr_count: a.pr_count ?? 0,
+    }))
+    return res.json({ data: safe })
+  } catch (err) {
+    return handleError(err, res)
+  }
+})
+
+// ─── GET /api/activities/:activityId ─────────────────────────────────────────
+
+app.get('/api/activities/:activityId', requireSession, async (req: any, res: Response) => {
+  const activityId = req.params.activityId
+  try {
+    const cacheKey = `activity:${req.athleteId}:${activityId}`
+    const cached = await cache.get(req.athleteId, cacheKey)
+    if (cached) {
+      res.setHeader('X-Cache', 'HIT')
+      return res.json({ data: cached.effort, cacheHit: true })
+    }
+
+    res.setHeader('X-Cache', 'MISS')
+    const [activity, streams] = await Promise.all([
+      fetchActivity(req.athleteId, activityId),
+      fetchActivityStreams(req.athleteId, activityId),
+    ])
+
+    const normalised = normaliseActivity(activity, streams, req.athleteWeightKg)
+    await cache.set(req.athleteId, {
+      ...normalised,
+      effortId: cacheKey,
+      athleteId: req.athleteId,
+    })
+
+    return res.json({ data: normalised, cacheHit: false })
   } catch (err) {
     return handleError(err, res)
   }
