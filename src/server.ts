@@ -23,8 +23,6 @@ const port = process.env.PORT || 3000
 app.use(express.json())
 app.use(cookieParser())
 
-// ─── Postgres ─────────────────────────────────────────────────────────────────
-
 const db = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DATABASE_URL?.includes('railway.internal')
@@ -72,8 +70,6 @@ async function setupDatabase() {
   console.log('[db] tables ready')
 }
 
-// ─── Token store — Postgres backed ───────────────────────────────────────────
-
 export async function storeTokensInDb(params: {
   athleteId: number
   accessToken: string
@@ -107,8 +103,6 @@ export async function deleteTokensFromDb(athleteId: number): Promise<void> {
   await db.query('DELETE FROM athlete_tokens WHERE athlete_id = $1', [athleteId])
 }
 
-// ─── ID map — Postgres backed ─────────────────────────────────────────────────
-
 async function toSafeId(athleteId: number, realId: string): Promise<string> {
   const result = await db.query(`
     INSERT INTO effort_id_map (athlete_id, real_id)
@@ -129,8 +123,6 @@ async function toRealId(safeId: string): Promise<string | null> {
   return result.rows[0]?.real_id ?? null
 }
 
-// ─── CORS ─────────────────────────────────────────────────────────────────────
-
 app.use((req, res, next) => {
   const origin = req.headers.origin
   const allowed = [
@@ -148,17 +140,12 @@ app.use((req, res, next) => {
   next()
 })
 
-// ─── Auth routes ──────────────────────────────────────────────────────────────
-
 app.use('/api', authRouter)
-
-// ─── Session middleware ───────────────────────────────────────────────────────
 
 function requireSession(req: any, res: Response, next: any) {
   const sessionFromHeader = req.headers['x-session'] as string | undefined
   const sessionFromCookie = req.cookies?.session
   const session = sessionFromHeader || sessionFromCookie
-
   if (!session) {
     return res.status(401).json({ error: 'Not logged in', code: 'STRAVA_AUTH_EXPIRED' })
   }
@@ -172,119 +159,77 @@ function requireSession(req: any, res: Response, next: any) {
   }
 }
 
-// ─── Cache ────────────────────────────────────────────────────────────────────
-
 const cache = new EffortCache(createInMemoryCacheStore())
-
-// ─── Health check ─────────────────────────────────────────────────────────────
-
+const activityCache = new Map<string, { data: any; cachedAt: number }>()
+const ACTIVITY_CACHE_TTL_MS = 1000 * 60 * 30
 app.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', app: 'SegmentIQ API' })
 })
 
-// ─── GET /api/segments/starred ────────────────────────────────────────────────
-
 app.get('/api/segments/starred', requireSession, async (req: any, res: Response) => {
   try {
     const segments = await fetchStarredSegments(req.athleteId)
-    const safe = segments.map((s: any) => ({
-      ...s,
-      id: String(s.id),
-    }))
+    const safe = segments.map((s: any) => ({ ...s, id: String(s.id) }))
     return res.json({ data: safe })
   } catch (err) {
     return handleError(err, res)
   }
 })
-
-// ─── GET /api/segments/:segmentId/efforts ─────────────────────────────────────
 
 app.get('/api/segments/:segmentId/efforts', requireSession, async (req: any, res: Response) => {
   try {
     const segmentId = parseInt(req.params.segmentId, 10)
     const efforts = await fetchSegmentEfforts(req.athleteId, segmentId)
-
     const safe = await Promise.all(efforts.map(async (e: any) => ({
       ...e,
       id: await toSafeId(req.athleteId, String(e.id)),
       activity: { ...e.activity, id: String(e.activity.id) },
     })))
-
     return res.json({ data: safe })
   } catch (err) {
     return handleError(err, res)
   }
 })
 
-// ─── GET /api/efforts/compare?a=:idA&b=:idB ──────────────────────────────────
-// MUST be registered before /api/efforts/:effortId to prevent Express
-// matching "compare" as the effortId parameter
-
+// MUST be registered before /api/efforts/:effortId
 app.get('/api/efforts/compare', requireSession, async (req: any, res: Response) => {
   const { a: safeIdA, b: safeIdB } = req.query
-
   if (typeof safeIdA !== 'string' || typeof safeIdB !== 'string') {
-    return res.status(400).json({
-      error: 'Both ?a= and ?b= effort IDs are required',
-      code: 'INTERNAL_ERROR',
-    })
+    return res.status(400).json({ error: 'Both ?a= and ?b= effort IDs are required', code: 'INTERNAL_ERROR' })
   }
-
   const realIdA = await toRealId(safeIdA)
   const realIdB = await toRealId(safeIdB)
-
   if (!realIdA || !realIdB) {
-    return res.status(404).json({
-      error: 'Efforts not found — please go back and reselect.',
-      code: 'EFFORT_NOT_FOUND',
-    })
+    return res.status(404).json({ error: 'Efforts not found — please go back and reselect.', code: 'EFFORT_NOT_FOUND' })
   }
-
   try {
     const [resultA, resultB] = await Promise.all([
       getOrFetch(req.athleteId, realIdA, req.athleteWeightKg),
       getOrFetch(req.athleteId, realIdB, req.athleteWeightKg),
     ])
-
     const deltas = computeComparison(resultA.effort, resultB.effort)
-
     return res.json({
-      data: {
-        effortA: resultA.effort,
-        effortB: resultB.effort,
-        deltas,
-      },
+      data: { effortA: resultA.effort, effortB: resultB.effort, deltas },
       cacheHit: resultA.cacheHit && resultB.cacheHit,
     })
-
   } catch (err) {
     return handleError(err, res)
   }
 })
 
-// ─── GET /api/efforts/:effortId ───────────────────────────────────────────────
-
 app.get('/api/efforts/:effortId', requireSession, async (req: any, res: Response) => {
   const safeKey = req.params.effortId
-
   const realEffortId = await toRealId(safeKey)
   if (!realEffortId) {
     return res.status(404).json({ error: 'Effort not found.', code: 'EFFORT_NOT_FOUND' })
   }
-
   try {
     const cached = await cache.get(req.athleteId, realEffortId)
     if (cached) {
       res.setHeader('X-Cache', 'HIT')
-      return res.json({
-        data: cached.effort,
-        cachedAt: cached.cachedAt,
-        cacheHit: true,
-      })
+      return res.json({ data: cached.effort, cachedAt: cached.cachedAt, cacheHit: true })
     }
-
     res.setHeader('X-Cache', 'MISS')
-
     const rawEffort = await fetchEffort(req.athleteId, realEffortId)
     const streams = await fetchEffortStreams(
       req.athleteId,
@@ -292,19 +237,14 @@ app.get('/api/efforts/:effortId', requireSession, async (req: any, res: Response
       parseInt(rawEffort.start_index, 10),
       parseInt(rawEffort.end_index, 10)
     )
-
     const normalised = normaliseEffort(rawEffort, streams, req.athleteWeightKg)
     normalised.athleteId = req.athleteId
     await cache.set(req.athleteId, normalised)
-
     return res.json({ data: normalised, cachedAt: null, cacheHit: false })
-
   } catch (err) {
     return handleError(err, res)
   }
 })
-
-// ─── GET /api/activities ──────────────────────────────────────────────────────
 
 app.get('/api/activities', requireSession, async (req: any, res: Response) => {
   try {
@@ -333,39 +273,27 @@ app.get('/api/activities', requireSession, async (req: any, res: Response) => {
   }
 })
 
-// ─── GET /api/activities/:activityId ─────────────────────────────────────────
-
 app.get('/api/activities/:activityId', requireSession, async (req: any, res: Response) => {
   const activityId = req.params.activityId
+  const cacheKey = `${req.athleteId}:${activityId}`
   try {
-    const cacheKey = `activity:${req.athleteId}:${activityId}`
-    const cached = await cache.get(req.athleteId, cacheKey)
-    if (cached) {
+    const cached = activityCache.get(cacheKey)
+    if (cached && Date.now() - cached.cachedAt < ACTIVITY_CACHE_TTL_MS) {
       res.setHeader('X-Cache', 'HIT')
-      return res.json({ data: cached.effort, cacheHit: true })
+      return res.json({ data: cached.data, cacheHit: true })
     }
-
     res.setHeader('X-Cache', 'MISS')
     const [activity, streams] = await Promise.all([
       fetchActivity(req.athleteId, activityId),
       fetchActivityStreams(req.athleteId, activityId),
     ])
-
     const normalised = normaliseActivity(activity, streams, req.athleteWeightKg)
-    await cache.set(req.athleteId, {
-      ...normalised,
-      effortId: cacheKey,
-      athleteId: req.athleteId,
-    })
-
+    activityCache.set(cacheKey, { data: normalised, cachedAt: Date.now() })
     return res.json({ data: normalised, cacheHit: false })
   } catch (err) {
     return handleError(err, res)
   }
 })
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 async function getOrFetch(
   athleteId: number,
   realEffortId: string,
@@ -381,11 +309,9 @@ async function getOrFetch(
     parseInt(rawEffort.start_index, 10),
     parseInt(rawEffort.end_index, 10)
   )
-
   const normalised = normaliseEffort(rawEffort, streams, athleteWeightKg)
   normalised.athleteId = athleteId
   await cache.set(athleteId, normalised)
-
   return { effort: normalised, cachedAt: null, cacheHit: false }
 }
 
@@ -424,8 +350,6 @@ function handleError(err: unknown, res: Response) {
     code: 'INTERNAL_ERROR',
   })
 }
-
-// ─── Start ────────────────────────────────────────────────────────────────────
 
 setupDatabase()
   .then(() => {
