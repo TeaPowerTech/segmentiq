@@ -1,5 +1,4 @@
 'use client'
-
 import React, { useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 
@@ -10,14 +9,12 @@ function AuthCompleteContent() {
   useEffect(() => {
     const token = searchParams.get('token')
     const name = searchParams.get('name') ?? ''
-
     if (!token) {
       router.push('/?error=auth_failed')
       return
     }
-
     localStorage.setItem('session', token)
-    router.push(`/dashboard?name=${encodeURIComponent(name)}`)
+    router.push(`/home?name=${encodeURIComponent(name)}`)
   }, [])
 
   return (
