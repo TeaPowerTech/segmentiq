@@ -253,3 +253,122 @@ function lerpNullable(
   if (a == null || b == null) return null
   return lerp(a, b, t)
 }
+// ─── Activity normalisation ───────────────────────────────────────────────────
+
+export interface ActivityPoint {
+  distancePct: number
+  distanceMetres: number
+  elevationMetres: number
+  elevationGainMetres: number
+  heartRate: number | null
+  speedKph: number
+  powerWatts: number | null
+  cadence: number | null
+}
+
+export interface NormalisedActivity {
+  activityId: string
+  name: string
+  startDate: string
+  movingTimeSeconds: number
+  elapsedTimeSeconds: number
+  distanceMetres: number
+  totalElevationGain: number
+  averageHeartRate: number | null
+  maxHeartRate: number | null
+  averageSpeedKph: number | null
+  maxSpeedKph: number | null
+  averagePowerWatts: number | null
+  normalisedPowerWatts: number | null
+  averageCadence: number | null
+  hasPower: boolean
+  type: string
+  points: ActivityPoint[]
+}
+
+const ACTIVITY_POINTS = 200
+
+export function normaliseActivity(
+  activity: any,
+  streams: any,
+  athleteWeightKg: number | null
+): NormalisedActivity {
+  const distance = streams.distance?.data ?? []
+  const altitude = streams.altitude?.data ?? []
+  const heartrate = streams.heartrate?.data ?? []
+  const watts = streams.watts?.data ?? []
+  const velocity = streams.velocity_smooth?.data ?? []
+  const cadence = streams.cadence?.data ?? []
+
+  const totalDist = distance[distance.length - 1] ?? activity.distance ?? 0
+  const n = distance.length
+
+  if (n < 2) throw new NormaliseError('Insufficient stream data for activity')
+
+  const points: ActivityPoint[] = []
+  let elevGainSoFar = 0
+
+  for (let i = 0; i < ACTIVITY_POINTS; i++) {
+    const idx = Math.min(Math.floor((i / (ACTIVITY_POINTS - 1)) * (n - 1)), n - 2)
+    const prevIdx = i === 0 ? 0 : Math.floor(((i - 1) / (ACTIVITY_POINTS - 1)) * (n - 1))
+
+    const distM = distance[idx] ?? 0
+    const elevM = altitude[idx] ?? 0
+
+    if (i > 0 && altitude[idx] != null && altitude[prevIdx] != null) {
+      const elevDiff = (altitude[idx] ?? 0) - (altitude[prevIdx] ?? 0)
+      if (elevDiff > 0) elevGainSoFar += elevDiff
+    }
+
+    const speedMs = velocity[idx] ?? 0
+    const hr = heartrate[idx] != null ? Math.round(heartrate[idx]) : null
+    const pw = watts[idx] != null ? Math.round(watts[idx]) : null
+    const cad = cadence[idx] != null ? Math.round(cadence[idx]) : null
+
+    points.push({
+      distancePct: totalDist > 0 ? distM / totalDist : i / (ACTIVITY_POINTS - 1),
+      distanceMetres: distM,
+      elevationMetres: elevM,
+      elevationGainMetres: elevGainSoFar,
+      heartRate: hr,
+      speedKph: speedMs * 3.6,
+      powerWatts: pw,
+      cadence: cad,
+    })
+  }
+
+  // Normalised power
+  let normalisedPower: number | null = null
+  if (watts.length > 30) {
+    const windowSize = Math.min(30, Math.floor(watts.length / 10))
+    const rolling: number[] = []
+    for (let i = windowSize - 1; i < watts.length; i++) {
+      const window = watts.slice(i - windowSize + 1, i + 1)
+      rolling.push(window.reduce((s: number, v: number) => s + v, 0) / window.length)
+    }
+    if (rolling.length > 0) {
+      const mean4th = rolling.reduce((s, v) => s + Math.pow(v, 4), 0) / rolling.length
+      normalisedPower = Math.round(Math.pow(mean4th, 0.25))
+    }
+  }
+
+  return {
+    activityId: String(activity.id),
+    name: activity.name,
+    startDate: activity.start_date,
+    movingTimeSeconds: activity.moving_time,
+    elapsedTimeSeconds: activity.elapsed_time,
+    distanceMetres: activity.distance,
+    totalElevationGain: activity.total_elevation_gain,
+    averageHeartRate: activity.average_heartrate ?? null,
+    maxHeartRate: activity.max_heartrate ?? null,
+    averageSpeedKph: activity.average_speed != null ? activity.average_speed * 3.6 : null,
+    maxSpeedKph: activity.max_speed != null ? activity.max_speed * 3.6 : null,
+    averagePowerWatts: activity.average_watts ?? null,
+    normalisedPowerWatts: normalisedPower,
+    averageCadence: activity.average_cadence ?? null,
+    hasPower: activity.device_watts === true,
+    type: activity.type ?? 'Ride',
+    points,
+  }
+}
