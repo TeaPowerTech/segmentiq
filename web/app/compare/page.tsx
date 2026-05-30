@@ -180,6 +180,567 @@ function gradeColour(grade: number): string {
   return '#EF4444'
 }
 
+// Core draw function — works at any scale
+// s = scale factor (1 for preview 390×700, 2.769 for export 1080×1920)
+// offsetY = top offset for export safe zone (250px at full res)
+function drawAnimation(
+  ctx: CanvasRenderingContext2D,
+  t: number,
+  eA: NormalisedEffort,
+  eB: NormalisedEffort | null,
+  sA: Effort,
+  sB: Effort | null,
+  minElev: number,
+  elevRange: number,
+  s: number,   // scale
+  W: number,   // canvas width
+  H: number,   // canvas height
+  safeTop: number,  // top of safe zone in canvas pixels
+  safeH: number,    // height of safe zone
+) {
+  const ORANGE = '#FC4C02'
+  const PURPLE = '#A855F7'
+  const WHITE = '#ffffff'
+  const MUTED = '#888888'
+  const DIM = '#444444'
+  const DIMMER = '#333333'
+  const GREEN = '#22C55E'
+  const RED = '#EF4444'
+  const GOLD = '#EAB308'
+  const BORDER = '#1e1e1e'
+  const SURFACE = '#111111'
+  const BG = '#0a0a0a'
+
+  const aFaster = !eB || eA.elapsedSeconds <= eB.elapsedSeconds
+  const colA = aFaster ? ORANGE : PURPLE
+  const colB = aFaster ? PURPLE : ORANGE
+
+  function r(x: number) { return Math.round(x * s) }
+  function ry(y: number) { return Math.round(safeTop + y * s) }
+
+  function roundRect(x: number, y: number, w: number, h: number, radius: number) {
+    const rw = r(w); if (rw <= 0) return
+    const rx = r(x), ry2 = ry(y), rh = r(h), rr = r(radius)
+    ctx.beginPath()
+    ctx.moveTo(rx + rr, ry2)
+    ctx.lineTo(rx + rw - rr, ry2)
+    ctx.quadraticCurveTo(rx + rw, ry2, rx + rw, ry2 + rr)
+    ctx.lineTo(rx + rw, ry2 + rh - rr)
+    ctx.quadraticCurveTo(rx + rw, ry2 + rh, rx + rw - rr, ry2 + rh)
+    ctx.lineTo(rx + rr, ry2 + rh)
+    ctx.quadraticCurveTo(rx, ry2 + rh, rx, ry2 + rh - rr)
+    ctx.lineTo(rx, ry2 + rr)
+    ctx.quadraticCurveTo(rx, ry2, rx + rr, ry2)
+    ctx.closePath()
+  }
+
+  // Layout constants in unscaled coords (390px base)
+  const PAD = 16
+  const CW = 390 - PAD * 2  // content width
+  const HALF = 390 / 2
+
+  // Phase progress
+  const PHASE_HEADER_END = 0.08
+  const PHASE_TIMES_END = 0.28
+  const PHASE_DELTA_END = 0.38
+  const PHASE_COUNTDOWN_END = 0.58
+  const PHASE_RACE_END = 0.90
+
+  const headerAlpha = Math.min(t / PHASE_HEADER_END, 1)
+  const timesT = t < PHASE_HEADER_END ? 0 : Math.min((t - PHASE_HEADER_END) / (PHASE_TIMES_END - PHASE_HEADER_END), 1)
+  const deltaT = t < PHASE_TIMES_END ? 0 : Math.min((t - PHASE_TIMES_END) / (PHASE_DELTA_END - PHASE_TIMES_END), 1)
+  const countdownT = t < PHASE_DELTA_END ? 0 : Math.min((t - PHASE_DELTA_END) / (PHASE_COUNTDOWN_END - PHASE_DELTA_END), 1)
+  const raceT = t < PHASE_COUNTDOWN_END ? 0 : Math.min((t - PHASE_COUNTDOWN_END) / (PHASE_RACE_END - PHASE_COUNTDOWN_END), 1)
+  const holdT = t < PHASE_RACE_END ? 0 : Math.min((t - PHASE_RACE_END) / (1 - PHASE_RACE_END), 1)
+
+  const tA = Math.min(raceT, 1)
+  const ratioB = eB ? eB.elapsedSeconds / eA.elapsedSeconds : 1
+  const tB = eB ? Math.min(raceT / ratioB, 1) : 1
+
+  // ─── Orange left accent ────────────────────────────────────────────────────
+  ctx.fillStyle = ORANGE
+  ctx.fillRect(0, safeTop, r(4), safeH)
+
+  // ─── Elevation + gradient — always visible ────────────────────────────────
+  const elevY = 222  // unscaled y within safe zone
+  const elevH = 110
+  const elevPad = PAD
+  const elevW = 390 - elevPad * 2
+
+  const elevPts = eA.points.map((p, i) => ({
+    x: r(elevPad + (i / (eA.points.length - 1)) * elevW),
+    y: ry(elevY + elevH - ((p.elevationMetres - minElev) / elevRange) * elevH),
+  }))
+
+  const elevGrad = ctx.createLinearGradient(0, ry(elevY), 0, ry(elevY + elevH))
+  elevGrad.addColorStop(0, 'rgba(252,76,2,0.2)')
+  elevGrad.addColorStop(1, 'rgba(252,76,2,0.02)')
+  ctx.beginPath()
+  ctx.moveTo(elevPts[0].x, ry(elevY + elevH))
+  elevPts.forEach(p => ctx.lineTo(p.x, p.y))
+  ctx.lineTo(elevPts[elevPts.length - 1].x, ry(elevY + elevH))
+  ctx.closePath()
+  ctx.fillStyle = elevGrad; ctx.fill()
+
+  ctx.beginPath()
+  elevPts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y))
+  ctx.strokeStyle = ORANGE; ctx.lineWidth = r(1.5); ctx.lineJoin = 'round'; ctx.stroke()
+
+  // Grade profile
+  const gradeY = elevY + elevH + 10
+  const gradeH2 = 18
+
+  ctx.fillStyle = DIM
+  ctx.font = `${r(9)}px -apple-system, sans-serif`
+  ctx.textAlign = 'left'
+  ctx.fillText('GRADIENT', r(PAD), ry(gradeY - 4))
+
+  const segCount = 40
+  for (let i = 0; i < segCount; i++) {
+    const idx0 = Math.floor((i / segCount) * (eA.points.length - 1))
+    const idx1 = Math.floor(((i + 1) / segCount) * (eA.points.length - 1))
+    const p0 = eA.points[idx0]; const p1 = eA.points[idx1]
+    const distDiff = (p1.distancePct - p0.distancePct) * eA.segment.distanceMetres
+    const elevDiff = p1.elevationMetres - p0.elevationMetres
+    const grade = distDiff > 0 ? (elevDiff / distDiff) * 100 : 0
+    const segX = PAD + (i / segCount) * (390 - PAD * 2)
+    const segW = (390 - PAD * 2) / segCount + 0.5
+    ctx.fillStyle = gradeColour(grade)
+    roundRect(segX, gradeY, segW, gradeH2, 2)
+    ctx.fill()
+  }
+
+  const legendItems = [
+    { label: '<3%', colour: GREEN },
+    { label: '3-6%', colour: '#EAB308' },
+    { label: '6-10%', colour: ORANGE },
+    { label: '>10%', colour: RED },
+  ]
+  let lx = PAD
+  const ly = gradeY + gradeH2 + 10
+  legendItems.forEach(item => {
+    ctx.fillStyle = item.colour
+    ctx.fillRect(r(lx), ry(ly), r(8), r(6))
+    ctx.fillStyle = DIM
+    ctx.font = `${r(9)}px -apple-system, sans-serif`
+    ctx.textAlign = 'left'
+    ctx.fillText(item.label, r(lx + 10), ry(ly + 7))
+    lx += 52
+  })
+
+  // ─── Header ───────────────────────────────────────────────────────────────
+  ctx.globalAlpha = headerAlpha
+  ctx.fillStyle = SURFACE
+  ctx.fillRect(0, safeTop, W, r(68))
+  ctx.strokeStyle = BORDER; ctx.lineWidth = 1
+  ctx.beginPath(); ctx.moveTo(0, ry(68)); ctx.lineTo(W, ry(68)); ctx.stroke()
+
+  ctx.fillStyle = MUTED
+  ctx.font = `500 ${r(10)}px -apple-system, sans-serif`
+  ctx.textAlign = 'left'
+  ctx.fillText('SEGMENT', r(PAD), ry(18))
+  ctx.fillStyle = WHITE
+  ctx.font = `700 ${r(16)}px -apple-system, sans-serif`
+  ctx.fillText(eA.segment.name, r(PAD), ry(36))
+  const distStr = eA.segment.distanceMetres >= 1000
+    ? (eA.segment.distanceMetres / 1000).toFixed(1) + 'km'
+    : Math.round(eA.segment.distanceMetres) + 'm'
+  ctx.fillStyle = MUTED
+  ctx.font = `400 ${r(11)}px -apple-system, sans-serif`
+  ctx.fillText(`${distStr} · ${eA.segment.averageGradePct}% avg grade`, r(PAD), ry(54))
+  ctx.fillStyle = DIMMER
+  ctx.font = `600 ${r(11)}px -apple-system, sans-serif`
+  ctx.textAlign = 'right'
+  ctx.fillText('SEGMENTIQ', r(390 - PAD), ry(36))
+  ctx.globalAlpha = 1
+
+  // ─── Times row ────────────────────────────────────────────────────────────
+  const timesY = 68
+  const timesAlpha = Math.min(timesT * 3, 1)
+
+  ctx.globalAlpha = timesAlpha
+  ctx.strokeStyle = BORDER; ctx.lineWidth = 1
+  ctx.beginPath(); ctx.moveTo(r(HALF), ry(timesY)); ctx.lineTo(r(HALF), ry(timesY + 110)); ctx.stroke()
+
+  const countedA = countUpTime(eA.elapsedSeconds, easeInOut(timesT))
+  ctx.fillStyle = colA
+  ctx.font = `500 ${r(10)}px -apple-system, sans-serif`
+  ctx.textAlign = 'left'
+  ctx.fillText('EFFORT A', r(PAD + 4), ry(timesY + 20))
+  ctx.fillStyle = colA
+  ctx.font = `700 ${r(36)}px -apple-system, sans-serif`
+  ctx.fillText(formatTime(countedA), r(PAD + 4), ry(timesY + 58))
+  ctx.fillStyle = DIM
+  ctx.font = `400 ${r(11)}px -apple-system, sans-serif`
+  ctx.fillText(formatDate(eA.startDate), r(PAD + 4), ry(timesY + 74))
+
+  if (eA.prRank === 1 && timesT > 0.8) {
+    ctx.globalAlpha = timesAlpha * ((timesT - 0.8) / 0.2)
+    roundRect(PAD + 4, timesY + 82, 28, 16, 8)
+    ctx.fillStyle = 'rgba(234,179,8,0.15)'; ctx.fill()
+    roundRect(PAD + 4, timesY + 82, 28, 16, 8)
+    ctx.strokeStyle = 'rgba(234,179,8,0.3)'; ctx.lineWidth = 1; ctx.stroke()
+    ctx.fillStyle = GOLD; ctx.font = `600 ${r(9)}px -apple-system, sans-serif`
+    ctx.textAlign = 'center'; ctx.fillText('PR', r(PAD + 18), ry(timesY + 94))
+    ctx.globalAlpha = timesAlpha
+  }
+
+  if (eB) {
+    const countedB = countUpTime(eB.elapsedSeconds, easeInOut(timesT))
+    ctx.fillStyle = colB
+    ctx.font = `500 ${r(10)}px -apple-system, sans-serif`
+    ctx.textAlign = 'left'
+    ctx.fillText('EFFORT B', r(HALF + PAD), ry(timesY + 20))
+    ctx.fillStyle = colB
+    ctx.font = `700 ${r(36)}px -apple-system, sans-serif`
+    ctx.fillText(formatTime(countedB), r(HALF + PAD), ry(timesY + 58))
+    ctx.fillStyle = DIM
+    ctx.font = `400 ${r(11)}px -apple-system, sans-serif`
+    ctx.fillText(formatDate(eB.startDate), r(HALF + PAD), ry(timesY + 74))
+
+    if (eB.prRank === 1 && timesT > 0.8) {
+      ctx.globalAlpha = timesAlpha * ((timesT - 0.8) / 0.2)
+      roundRect(HALF + PAD, timesY + 82, 28, 16, 8)
+      ctx.fillStyle = 'rgba(234,179,8,0.15)'; ctx.fill()
+      roundRect(HALF + PAD, timesY + 82, 28, 16, 8)
+      ctx.strokeStyle = 'rgba(234,179,8,0.3)'; ctx.lineWidth = 1; ctx.stroke()
+      ctx.fillStyle = GOLD; ctx.font = `600 ${r(9)}px -apple-system, sans-serif`
+      ctx.textAlign = 'center'; ctx.fillText('PR', r(HALF + PAD + 14), ry(timesY + 94))
+      ctx.globalAlpha = timesAlpha
+    }
+  }
+  ctx.globalAlpha = 1
+
+  // ─── Delta banner ─────────────────────────────────────────────────────────
+  const timeDelta = eB ? eA.elapsedSeconds - eB.elapsedSeconds : 0
+  const deltaColour = timeDelta < 0 ? GREEN : timeDelta > 0 ? RED : WHITE
+
+  if (deltaT > 0) {
+    ctx.globalAlpha = easeInOut(deltaT)
+    const deltaBg = timeDelta < 0 ? 'rgba(34,197,94,0.08)' : timeDelta > 0 ? 'rgba(239,68,68,0.08)' : 'rgba(255,255,255,0.04)'
+    ctx.fillStyle = deltaBg
+    ctx.fillRect(0, ry(timesY + 110), W, r(36))
+    ctx.strokeStyle = BORDER; ctx.lineWidth = 1
+    ctx.beginPath(); ctx.moveTo(0, ry(timesY + 110)); ctx.lineTo(W, ry(timesY + 110)); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(0, ry(timesY + 146)); ctx.lineTo(W, ry(timesY + 146)); ctx.stroke()
+    ctx.fillStyle = deltaColour
+    ctx.font = `700 ${r(16)}px -apple-system, sans-serif`
+    ctx.textAlign = 'center'
+    ctx.fillText(
+      timeDelta === 0 ? 'Dead heat' : `${timeDelta < 0 ? '▲' : '▼'} ${Math.abs(timeDelta)}s ${timeDelta < 0 ? '— A faster' : '— B faster'}`,
+      r(195), ry(timesY + 133)
+    )
+    ctx.globalAlpha = 1
+  }
+
+  // ─── Countdown ────────────────────────────────────────────────────────────
+  if (countdownT > 0 && countdownT < 1) {
+    const cd = countdownT * 4
+    let label = ''
+    let pulse = 0
+    if (cd < 1) { label = '3'; pulse = 1 - cd }
+    else if (cd < 2) { label = '2'; pulse = 1 - (cd - 1) }
+    else if (cd < 3) { label = '1'; pulse = 1 - (cd - 2) }
+    else { label = 'GO!'; pulse = cd - 3 }
+
+    const alpha = label === 'GO!'
+      ? Math.min(pulse * 3, 1) * (1 - Math.max((pulse - 0.5) * 2, 0))
+      : Math.min(pulse * 2, 1)
+    const scale = 1 + (1 - pulse) * 0.3
+
+    ctx.globalAlpha = alpha
+    ctx.save()
+    ctx.translate(r(195), ry(elevY + elevH / 2))
+    ctx.scale(scale, scale)
+    ctx.fillStyle = label === 'GO!' ? GREEN : WHITE
+    ctx.font = `900 ${r(label === 'GO!' ? 52 : 72)}px -apple-system, sans-serif`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(label, 0, 0)
+    ctx.textBaseline = 'alphabetic'
+    ctx.restore()
+    ctx.globalAlpha = 1
+  }
+
+  // ─── Racing dots ──────────────────────────────────────────────────────────
+  if (raceT > 0) {
+    const trailAEnd = Math.floor(tA * (eA.points.length - 1))
+    if (trailAEnd > 0) {
+      ctx.beginPath()
+      for (let i = 0; i <= trailAEnd; i++) {
+        const p = eA.points[i]
+        const x = r(elevPad + p.distancePct * elevW)
+        const y = ry(elevY + elevH - ((p.elevationMetres - minElev) / elevRange) * elevH)
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)
+      }
+      ctx.strokeStyle = colA === ORANGE ? 'rgba(252,76,2,0.8)' : 'rgba(168,85,247,0.8)'
+      ctx.lineWidth = r(2.5); ctx.lineJoin = 'round'; ctx.stroke()
+    }
+
+    if (eB) {
+      const trailBEnd = Math.floor(tB * (eB.points.length - 1))
+      if (trailBEnd > 0) {
+        ctx.beginPath()
+        for (let i = 0; i <= trailBEnd; i++) {
+          const pB = eB.points[i]
+          const pA = eA.points[Math.min(i, eA.points.length - 1)]
+          const x = r(elevPad + pB.distancePct * elevW)
+          const y = ry(elevY + elevH - ((pA.elevationMetres - minElev) / elevRange) * elevH)
+          i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)
+        }
+        ctx.strokeStyle = colB === ORANGE ? 'rgba(252,76,2,0.8)' : 'rgba(168,85,247,0.8)'
+        ctx.lineWidth = r(2.5); ctx.lineJoin = 'round'; ctx.stroke()
+      }
+    }
+
+    const ptA = getPointAt(eA, tA)
+    const dotAx = r(elevPad + ptA.distancePct * elevW)
+    const dotAy = ry(elevY + elevH - ((ptA.elevationMetres - minElev) / elevRange) * elevH)
+    const glowCA = colA === ORANGE ? 'rgba(252,76,2,' : 'rgba(168,85,247,'
+    const glowA = ctx.createRadialGradient(dotAx, dotAy, 0, dotAx, dotAy, r(12))
+    glowA.addColorStop(0, glowCA + '0.5)'); glowA.addColorStop(1, glowCA + '0)')
+    ctx.fillStyle = glowA; ctx.beginPath(); ctx.arc(dotAx, dotAy, r(12), 0, Math.PI * 2); ctx.fill()
+    ctx.fillStyle = colA; ctx.beginPath(); ctx.arc(dotAx, dotAy, r(5), 0, Math.PI * 2); ctx.fill()
+    ctx.strokeStyle = WHITE; ctx.lineWidth = r(1.5); ctx.stroke()
+    ctx.fillStyle = colA; ctx.font = `bold ${r(10)}px -apple-system, sans-serif`; ctx.textAlign = 'center'
+    ctx.fillText('A', dotAx, dotAy - r(12))
+
+    if (eB) {
+      const ptB = getPointAt(eB, tB)
+      const dotBx = r(elevPad + ptB.distancePct * elevW)
+      const bElevIdx = Math.min(Math.floor(tB * (eA.points.length - 1)), eA.points.length - 1)
+      const dotBy = ry(elevY + elevH - ((eA.points[bElevIdx].elevationMetres - minElev) / elevRange) * elevH)
+      const glowCB = colB === ORANGE ? 'rgba(252,76,2,' : 'rgba(168,85,247,'
+      const glowB = ctx.createRadialGradient(dotBx, dotBy, 0, dotBx, dotBy, r(12))
+      glowB.addColorStop(0, glowCB + '0.5)'); glowB.addColorStop(1, glowCB + '0)')
+      ctx.fillStyle = glowB; ctx.beginPath(); ctx.arc(dotBx, dotBy, r(12), 0, Math.PI * 2); ctx.fill()
+      ctx.fillStyle = colB; ctx.beginPath(); ctx.arc(dotBx, dotBy, r(5), 0, Math.PI * 2); ctx.fill()
+      ctx.strokeStyle = WHITE; ctx.lineWidth = r(1.5); ctx.stroke()
+      ctx.fillStyle = colB; ctx.font = `bold ${r(10)}px -apple-system, sans-serif`; ctx.textAlign = 'center'
+      ctx.fillText('B', dotBx, dotBy - r(12))
+    }
+  }
+
+  // ─── Time gap tracker ─────────────────────────────────────────────────────
+  const gapY = gradeY + gradeH2 + 28
+  const gapH = 52
+  const gapAlpha = raceT > 0 ? Math.min(raceT * 4, 1) : 0
+
+  if (gapAlpha > 0 && eB) {
+    ctx.globalAlpha = gapAlpha
+    ctx.fillStyle = DIM; ctx.font = `400 ${r(9)}px -apple-system, sans-serif`; ctx.textAlign = 'left'
+    ctx.fillText('TIME GAP', r(PAD), ry(gapY))
+
+    const maxSecs = Math.max(eA.elapsedSeconds, eB.elapsedSeconds)
+    const wallSecs = raceT * maxSecs
+    const aProgress = Math.min(wallSecs / eA.elapsedSeconds, 1)
+    const bProgress = Math.min(wallSecs / eB.elapsedSeconds, 1)
+
+    const trackY = gapY + 12
+    const trackW = 390 - PAD * 2
+    ctx.fillStyle = BORDER
+    roundRect(PAD, trackY, trackW, 6, 3); ctx.fill()
+
+    const aDotX = r(PAD + aProgress * trackW)
+    const trackPY = ry(trackY + 3)
+    const glowCA2 = colA === ORANGE ? 'rgba(252,76,2,' : 'rgba(168,85,247,'
+    const glowTA = ctx.createRadialGradient(aDotX, trackPY, 0, aDotX, trackPY, r(10))
+    glowTA.addColorStop(0, glowCA2 + '0.4)'); glowTA.addColorStop(1, glowCA2 + '0)')
+    ctx.fillStyle = glowTA; ctx.beginPath(); ctx.arc(aDotX, trackPY, r(10), 0, Math.PI * 2); ctx.fill()
+    ctx.fillStyle = colA; ctx.beginPath(); ctx.arc(aDotX, trackPY, r(5), 0, Math.PI * 2); ctx.fill()
+    ctx.strokeStyle = WHITE; ctx.lineWidth = r(1.5); ctx.stroke()
+
+    const bDotX = r(PAD + bProgress * trackW)
+    const glowCB2 = colB === ORANGE ? 'rgba(252,76,2,' : 'rgba(168,85,247,'
+    const glowTB = ctx.createRadialGradient(bDotX, trackPY, 0, bDotX, trackPY, r(10))
+    glowTB.addColorStop(0, glowCB2 + '0.4)'); glowTB.addColorStop(1, glowCB2 + '0)')
+    ctx.fillStyle = glowTB; ctx.beginPath(); ctx.arc(bDotX, trackPY, r(10), 0, Math.PI * 2); ctx.fill()
+    ctx.fillStyle = colB; ctx.beginPath(); ctx.arc(bDotX, trackPY, r(5), 0, Math.PI * 2); ctx.fill()
+    ctx.strokeStyle = WHITE; ctx.lineWidth = r(1.5); ctx.stroke()
+
+    if (Math.abs(aDotX - bDotX) > r(4)) {
+      ctx.strokeStyle = aDotX > bDotX ? GREEN : RED
+      ctx.lineWidth = r(2); ctx.setLineDash([r(3), r(2)])
+      ctx.beginPath()
+      ctx.moveTo(Math.min(aDotX, bDotX) + r(6), trackPY)
+      ctx.lineTo(Math.max(aDotX, bDotX) - r(6), trackPY)
+      ctx.stroke(); ctx.setLineDash([])
+    }
+
+    const aDistCovered = aProgress * eA.segment.distanceMetres
+    const bDistCovered = bProgress * eB.segment.distanceMetres
+    const aAhead = aDistCovered >= bDistCovered
+    const gapMetres = Math.abs(aDistCovered - bDistCovered)
+    const trailingSpeedMs = aAhead
+      ? (eB.segment.distanceMetres / eB.elapsedSeconds)
+      : (eA.segment.distanceMetres / eA.elapsedSeconds)
+    const gapSecs = trailingSpeedMs > 0 ? Math.round(gapMetres / trailingSpeedMs) : 0
+
+    const gapLabel = gapSecs < 2 ? 'Neck and neck'
+      : `${gapSecs}s ${aAhead ? 'A leads' : 'B leads'}`
+    const gapLabelColour = gapSecs < 2 ? WHITE
+      : aAhead ? (colA === ORANGE ? GREEN : RED)
+      : (colB === ORANGE ? GREEN : RED)
+
+    ctx.fillStyle = gapLabelColour
+    ctx.font = `bold ${r(13)}px -apple-system, sans-serif`
+    ctx.textAlign = 'center'
+    ctx.fillText(gapLabel, r(195), ry(trackY + 30))
+    ctx.fillStyle = DIM; ctx.font = `bold ${r(9)}px -apple-system, sans-serif`
+    ctx.textAlign = 'left'; ctx.fillText('START', r(PAD), ry(trackY + 30))
+    ctx.textAlign = 'right'; ctx.fillText('FINISH', r(390 - PAD), ry(trackY + 30))
+    ctx.globalAlpha = 1
+  }
+
+  // ─── Live speed ───────────────────────────────────────────────────────────
+  const liveY = gapY + gapH + 8
+  const liveH = 60
+  const liveAlpha = raceT > 0 ? Math.min(raceT * 4, 1) : 0
+
+  if (liveAlpha > 0) {
+    ctx.globalAlpha = liveAlpha
+    ctx.strokeStyle = BORDER; ctx.lineWidth = 1
+    ctx.beginPath(); ctx.moveTo(r(HALF), ry(liveY)); ctx.lineTo(r(HALF), ry(liveY + liveH)); ctx.stroke()
+
+    const ptACurrent = getPointAt(eA, tA)
+    const ptBCurrent = eB ? getPointAt(eB, tB) : null
+
+    ctx.fillStyle = colA; ctx.font = `bold ${r(9)}px -apple-system, sans-serif`; ctx.textAlign = 'left'
+    ctx.fillText('LIVE SPEED', r(PAD + 4), ry(liveY + 12))
+    ctx.fillStyle = WHITE; ctx.font = `bold ${r(26)}px -apple-system, sans-serif`
+    ctx.fillText(`${ptACurrent.speedKph.toFixed(1)}`, r(PAD + 4), ry(liveY + 40))
+    ctx.fillStyle = MUTED; ctx.font = `400 ${r(10)}px -apple-system, sans-serif`
+    ctx.fillText('km/h', r(PAD + 4), ry(liveY + 54))
+    ctx.fillStyle = DIM; ctx.fillText(formatPace(ptACurrent.speedKph), r(PAD + 60), ry(liveY + 54))
+
+    if (ptBCurrent) {
+      ctx.fillStyle = colB; ctx.font = `bold ${r(9)}px -apple-system, sans-serif`; ctx.textAlign = 'left'
+      ctx.fillText('LIVE SPEED', r(HALF + PAD), ry(liveY + 12))
+      ctx.fillStyle = WHITE; ctx.font = `bold ${r(26)}px -apple-system, sans-serif`
+      ctx.fillText(`${ptBCurrent.speedKph.toFixed(1)}`, r(HALF + PAD), ry(liveY + 40))
+      ctx.fillStyle = MUTED; ctx.font = `400 ${r(10)}px -apple-system, sans-serif`
+      ctx.fillText('km/h', r(HALF + PAD), ry(liveY + 54))
+      ctx.fillStyle = DIM; ctx.fillText(formatPace(ptBCurrent.speedKph), r(HALF + PAD + 56), ry(liveY + 54))
+    }
+    ctx.globalAlpha = 1
+  }
+
+  // ─── Tug of war bars ──────────────────────────────────────────────────────
+  const barsStartY = liveY + liveH + 8
+  const barTotalW = 390 - PAD * 2
+  const barMid = 195
+  const barAlpha = raceT > 0 ? Math.min(raceT * 6, 1) : 0
+
+  ctx.globalAlpha = barAlpha
+
+  const runAvgHrA = raceT > 0 ? avgUpTo(eA, tA, p => p.heartRate) : null
+  const runAvgHrB = raceT > 0 && eB ? avgUpTo(eB, tB, p => p.heartRate) : null
+  const avgHrA = runAvgHrA ?? (eA.averageHeartRate ?? null)
+  const avgHrB = runAvgHrB ?? (eB?.averageHeartRate ?? null)
+  const avgSpeedA = (raceT > 0 ? avgUpTo(eA, tA, p => p.speedKph) : null) ?? eA.averageSpeedKph
+  const avgSpeedB = ((raceT > 0 && eB ? avgUpTo(eB, tB, p => p.speedKph) : null) ?? eB?.averageSpeedKph) ?? null
+  const avgPowerA = (raceT > 0 ? avgUpTo(eA, tA, p => p.powerWatts) : null) ?? (eA.averagePowerWatts ?? null)
+  const avgPowerB = ((raceT > 0 && eB ? avgUpTo(eB, tB, p => p.powerWatts) : null) ?? (eB?.averagePowerWatts ?? null))
+  const npA = raceT > 0 ? normalisedPowerUpTo(eA, tA) : null
+  const npB = raceT > 0 && eB ? normalisedPowerUpTo(eB, tB) : null
+
+  let bY = barsStartY
+
+  function drawTugBar(
+    label: string,
+    valA: number | null, valB: number | null,
+    fmtA: string, fmtB: string,
+    subA?: string, subB?: string,
+    isEstA?: boolean, isEstB?: boolean,
+  ) {
+    if (valA == null && valB == null) return
+
+    ctx.fillStyle = colA; ctx.font = `500 ${r(13)}px -apple-system, sans-serif`; ctx.textAlign = 'left'
+    ctx.fillText(valA != null ? fmtA : '—', r(PAD + 4), ry(bY + 16))
+    if (subA) {
+      ctx.fillStyle = DIM; ctx.font = `400 ${r(9)}px -apple-system, sans-serif`
+      ctx.fillText(subA, r(PAD + 4), ry(bY + 27))
+    }
+    if (isEstA && valA != null) {
+      ctx.fillStyle = DIM; ctx.font = `400 ${r(8)}px -apple-system, sans-serif`
+      ctx.fillText('avg', r(PAD + 4), ry(bY + (subA ? 37 : 27)))
+    }
+
+    ctx.fillStyle = DIM; ctx.font = `400 ${r(10)}px -apple-system, sans-serif`; ctx.textAlign = 'center'
+    ctx.fillText(label, r(barMid), ry(bY + 10))
+
+    ctx.fillStyle = colB; ctx.font = `500 ${r(13)}px -apple-system, sans-serif`; ctx.textAlign = 'right'
+    ctx.fillText(valB != null ? fmtB : '—', r(390 - PAD - 4), ry(bY + 16))
+    if (subB) {
+      ctx.fillStyle = DIM; ctx.font = `400 ${r(9)}px -apple-system, sans-serif`; ctx.textAlign = 'right'
+      ctx.fillText(subB, r(390 - PAD - 4), ry(bY + 27))
+    }
+    if (isEstB && valB != null) {
+      ctx.fillStyle = DIM; ctx.font = `400 ${r(8)}px -apple-system, sans-serif`; ctx.textAlign = 'right'
+      ctx.fillText('avg', r(390 - PAD - 4), ry(bY + (subB ? 37 : 27)))
+    }
+
+    const trackY2 = bY + (subA || subB ? 36 : 22)
+    ctx.fillStyle = BORDER
+    roundRect(PAD, trackY2, barTotalW, 6, 3); ctx.fill()
+
+    const total = (valA ?? 0) + (valB ?? 0)
+    const animEase = easeInOut(Math.min(raceT * 3, 1))
+
+    if (total > 0) {
+      if (valA != null) {
+        const wA = (valA / total) * barTotalW * animEase
+        ctx.fillStyle = colA
+        roundRect(PAD, trackY2, wA, 6, 2); ctx.fill()
+      }
+      if (valB != null) {
+        const wB = (valB / total) * barTotalW * animEase
+        ctx.fillStyle = colB
+        roundRect(PAD + barTotalW - wB, trackY2, wB, 6, 2); ctx.fill()
+      }
+    }
+
+    bY += (subA || subB ? 52 : 38)
+    ctx.strokeStyle = BORDER; ctx.lineWidth = 1
+    ctx.beginPath(); ctx.moveTo(r(PAD), ry(bY - 4)); ctx.lineTo(r(390 - PAD), ry(bY - 4)); ctx.stroke()
+  }
+
+  drawTugBar('AVG HR', avgHrA, avgHrB,
+    avgHrA != null ? `${Math.round(avgHrA)} bpm` : '—',
+    avgHrB != null ? `${Math.round(avgHrB)} bpm` : '—',
+    undefined, undefined,
+    runAvgHrA == null && avgHrA != null,
+    runAvgHrB == null && avgHrB != null,
+  )
+  drawTugBar('AVG SPEED', avgSpeedA, avgSpeedB,
+    avgSpeedA != null ? `${avgSpeedA.toFixed(1)} km/h` : '—',
+    avgSpeedB != null ? `${avgSpeedB.toFixed(1)} km/h` : '—',
+  )
+  if (avgPowerA != null || avgPowerB != null) {
+    drawTugBar('AVG POWER', avgPowerA, avgPowerB,
+      avgPowerA != null ? `${Math.round(avgPowerA)}W${!sA.device_watts ? ' est.' : ''}` : '—',
+      avgPowerB != null ? `${Math.round(avgPowerB)}W${!sB?.device_watts ? ' est.' : ''}` : '—',
+      npA != null ? `NP ${npA}W` : undefined,
+      npB != null ? `NP ${npB}W` : undefined,
+      (raceT > 0 ? avgUpTo(eA, tA, p => p.powerWatts) : null) == null && avgPowerA != null,
+      (raceT > 0 && eB ? avgUpTo(eB, tB, p => p.powerWatts) : null) == null && avgPowerB != null,
+    )
+  }
+
+  ctx.globalAlpha = 1
+
+  // ─── Footer ───────────────────────────────────────────────────────────────
+  const footAlpha = holdT > 0 ? easeInOut(holdT) : (raceT > 0.8 ? (raceT - 0.8) / 0.2 : 0)
+  const footY = 700 - 34
+  ctx.globalAlpha = footAlpha
+  ctx.strokeStyle = BORDER; ctx.lineWidth = 1
+  ctx.beginPath(); ctx.moveTo(0, ry(footY)); ctx.lineTo(W, ry(footY)); ctx.stroke()
+  ctx.fillStyle = '#555555'; ctx.font = `700 ${r(11)}px -apple-system, sans-serif`; ctx.textAlign = 'left'
+  ctx.fillText('SEGMENTIQ', r(PAD), ry(footY + 20))
+  ctx.fillStyle = '#444444'; ctx.font = `400 ${r(10)}px -apple-system, sans-serif`; ctx.textAlign = 'right'
+  ctx.fillText('segmentiq.vercel.app', r(390 - PAD), ry(footY + 20))
+  ctx.globalAlpha = 1
+}
 interface SegmentReplayProps {
   effortA: NormalisedEffort
   effortB: NormalisedEffort | null
@@ -213,14 +774,21 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
   const PREVIEW_DURATION = 15000
   const EXPORT_DURATION = 30000
 
-  // Phases
-  const PHASE_HEADER_END = 0.08
-  const PHASE_TIMES_END = 0.28
-  const PHASE_DELTA_END = 0.38
-  const PHASE_COUNTDOWN_END = 0.58
-  const PHASE_RACE_END = 0.90
+  // Preview: 390×700
+  const PREVIEW_W = 390
+  const PREVIEW_H = 700
+  const PREVIEW_SCALE = 1
+  const PREVIEW_SAFE_TOP = 0
+  const PREVIEW_SAFE_H = 700
 
-  const drawFrame = useCallback((t: number) => {
+  // Export: 1080×1920 Instagram Stories with 250px safe zone padding
+  const EXPORT_W = 1080
+  const EXPORT_H = 1920
+  const EXPORT_SCALE = 1080 / 390
+  const EXPORT_SAFE_TOP = 250
+  const EXPORT_SAFE_H = 1420
+
+  const drawFrame = useCallback((t: number, exportMode = false) => {
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
@@ -233,568 +801,44 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
     const minElev = minElevRef.current
     const elevRange = elevRangeRef.current
 
-    const W = 390
-    const H = 700
-    canvas.width = W
-    canvas.height = H
-
-    const BG = '#0a0a0a'
-    const SURFACE = '#111111'
-    const BORDER = '#1e1e1e'
-    const ORANGE = '#FC4C02'
-    const PURPLE = '#A855F7'
-    const WHITE = '#ffffff'
-    const MUTED = '#888888'
-    const DIM = '#444444'
-    const DIMMER = '#333333'
-    const GREEN = '#22C55E'
-    const RED = '#EF4444'
-    const GOLD = '#EAB308'
-
-    const aFaster = !eB || eA.elapsedSeconds <= eB.elapsedSeconds
-    const colA = aFaster ? ORANGE : PURPLE
-    const colB = aFaster ? PURPLE : ORANGE
-
-    function roundRect(x: number, y: number, w: number, h: number, r: number) {
-      if (w <= 0) return
-      ctx.beginPath()
-      ctx.moveTo(x + r, y)
-      ctx.lineTo(x + w - r, y)
-      ctx.quadraticCurveTo(x + w, y, x + w, y + r)
-      ctx.lineTo(x + w, y + h - r)
-      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h)
-      ctx.lineTo(x + r, y + h)
-      ctx.quadraticCurveTo(x, y + h, x, y + h - r)
-      ctx.lineTo(x, y + r)
-      ctx.quadraticCurveTo(x, y, x + r, y)
-      ctx.closePath()
+    if (exportMode) {
+      canvas.width = EXPORT_W
+      canvas.height = EXPORT_H
+    } else {
+      canvas.width = PREVIEW_W
+      canvas.height = PREVIEW_H
     }
 
-    ctx.fillStyle = BG
+    const W = canvas.width
+    const H = canvas.height
+    const s = exportMode ? EXPORT_SCALE : PREVIEW_SCALE
+    const safeTop = exportMode ? EXPORT_SAFE_TOP : PREVIEW_SAFE_TOP
+    const safeH = exportMode ? EXPORT_SAFE_H : PREVIEW_SAFE_H
+
+    // Background
+    ctx.fillStyle = '#0a0a0a'
     ctx.fillRect(0, 0, W, H)
-    ctx.fillStyle = ORANGE
-    ctx.fillRect(0, 0, 4, H)
 
-    // Phase progress
-    const headerAlpha = Math.min(t / PHASE_HEADER_END, 1)
-    const timesT = t < PHASE_HEADER_END ? 0 : Math.min((t - PHASE_HEADER_END) / (PHASE_TIMES_END - PHASE_HEADER_END), 1)
-    const deltaT = t < PHASE_TIMES_END ? 0 : Math.min((t - PHASE_TIMES_END) / (PHASE_DELTA_END - PHASE_TIMES_END), 1)
-    const countdownT = t < PHASE_DELTA_END ? 0 : Math.min((t - PHASE_DELTA_END) / (PHASE_COUNTDOWN_END - PHASE_DELTA_END), 1)
-    const raceT = t < PHASE_COUNTDOWN_END ? 0 : Math.min((t - PHASE_COUNTDOWN_END) / (PHASE_RACE_END - PHASE_COUNTDOWN_END), 1)
-    const holdT = t < PHASE_RACE_END ? 0 : Math.min((t - PHASE_RACE_END) / (1 - PHASE_RACE_END), 1)
+    if (exportMode) {
+      // Top fade — transparent to #0a0a0a over 250px
+      const topGrad = ctx.createLinearGradient(0, 0, 0, 250)
+      topGrad.addColorStop(0, 'rgba(0,0,0,0)')
+      topGrad.addColorStop(1, '#0a0a0a')
+      ctx.fillStyle = topGrad
+      ctx.fillRect(0, 0, W, 250)
 
-    // ─── Elevation profile — visible from t=0 ─────────────────────────────────
-    const elevStartY = 222  // fixed position below where header+times+delta will be
-    const elevH = 110
-    const elevPad = 16
-    const elevW = W - elevPad * 2
-
-    // Always draw elevation from the very start
-    const elevPts = eA.points.map((p, i) => ({
-      x: elevPad + (i / (eA.points.length - 1)) * elevW,
-      y: elevStartY + elevH - ((p.elevationMetres - minElev) / elevRange) * elevH,
-    }))
-
-    const grad = ctx.createLinearGradient(0, elevStartY, 0, elevStartY + elevH)
-    grad.addColorStop(0, 'rgba(252,76,2,0.2)')
-    grad.addColorStop(1, 'rgba(252,76,2,0.02)')
-    ctx.beginPath()
-    ctx.moveTo(elevPts[0].x, elevStartY + elevH)
-    elevPts.forEach(p => ctx.lineTo(p.x, p.y))
-    ctx.lineTo(elevPts[elevPts.length - 1].x, elevStartY + elevH)
-    ctx.closePath()
-    ctx.fillStyle = grad
-    ctx.fill()
-
-    ctx.beginPath()
-    elevPts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y))
-    ctx.strokeStyle = ORANGE
-    ctx.lineWidth = 1.5
-    ctx.lineJoin = 'round'
-    ctx.stroke()
-
-    // Grade profile — visible from t=0
-    const gradeY = elevStartY + elevH + 10
-    const gradeH = 18
-    const gradePad = 16
-    const gradeW = W - gradePad * 2
-
-    ctx.fillStyle = DIM
-    ctx.font = '400 9px -apple-system, sans-serif'
-    ctx.textAlign = 'left'
-    ctx.fillText('GRADIENT', gradePad, gradeY - 4)
-
-    const pts = eA.points
-    const segCount = 40
-    for (let i = 0; i < segCount; i++) {
-      const idx0 = Math.floor((i / segCount) * (pts.length - 1))
-      const idx1 = Math.floor(((i + 1) / segCount) * (pts.length - 1))
-      const p0 = pts[idx0]; const p1 = pts[idx1]
-      const distDiff = (p1.distancePct - p0.distancePct) * eA.segment.distanceMetres
-      const elevDiff = p1.elevationMetres - p0.elevationMetres
-      const grade = distDiff > 0 ? (elevDiff / distDiff) * 100 : 0
-      const x = gradePad + (i / segCount) * gradeW
-      ctx.fillStyle = gradeColour(grade)
-      roundRect(x, gradeY, gradeW / segCount + 1, gradeH, 2)
-      ctx.fill()
+      // Bottom fade — #0a0a0a to transparent over 250px
+      const botGrad = ctx.createLinearGradient(0, H - 250, 0, H)
+      botGrad.addColorStop(0, '#0a0a0a')
+      botGrad.addColorStop(1, 'rgba(0,0,0,0)')
+      ctx.fillStyle = botGrad
+      ctx.fillRect(0, H - 250, W, 250)
     }
 
-    const legendItems = [
-      { label: '<3%', colour: '#22C55E' },
-      { label: '3-6%', colour: '#EAB308' },
-      { label: '6-10%', colour: '#FC4C02' },
-      { label: '>10%', colour: '#EF4444' },
-    ]
-    let lx = gradePad
-    const ly = gradeY + gradeH + 10
-    legendItems.forEach(item => {
-      ctx.fillStyle = item.colour
-      ctx.fillRect(lx, ly, 8, 6)
-      ctx.fillStyle = DIM
-      ctx.font = '400 9px -apple-system, sans-serif'
-      ctx.textAlign = 'left'
-      ctx.fillText(item.label, lx + 10, ly + 7)
-      lx += 52
-    })
-
-    // ─── Header ───────────────────────────────────────────────────────────────
-    ctx.globalAlpha = headerAlpha
-    ctx.fillStyle = SURFACE
-    ctx.fillRect(0, 0, W, 68)
-    ctx.strokeStyle = BORDER; ctx.lineWidth = 1
-    ctx.beginPath(); ctx.moveTo(0, 68); ctx.lineTo(W, 68); ctx.stroke()
-
-    ctx.fillStyle = MUTED
-    ctx.font = '500 10px -apple-system, sans-serif'
-    ctx.textAlign = 'left'
-    ctx.fillText('SEGMENT', 20, 18)
-    ctx.fillStyle = WHITE
-    ctx.font = '700 16px -apple-system, sans-serif'
-    ctx.fillText(eA.segment.name, 20, 36)
-    const distStr = eA.segment.distanceMetres >= 1000
-      ? (eA.segment.distanceMetres / 1000).toFixed(1) + 'km'
-      : Math.round(eA.segment.distanceMetres) + 'm'
-    ctx.fillStyle = MUTED
-    ctx.font = '400 11px -apple-system, sans-serif'
-    ctx.fillText(`${distStr} · ${eA.segment.averageGradePct}% avg grade`, 20, 54)
-    ctx.fillStyle = DIMMER
-    ctx.font = '600 11px -apple-system, sans-serif'
-    ctx.textAlign = 'right'
-    ctx.fillText('SEGMENTIQ', W - 20, 36)
-    ctx.globalAlpha = 1
-
-    // ─── Times row ────────────────────────────────────────────────────────────
-    const timesY = 68
-    const halfW = W / 2
-    const timesAlpha = Math.min(timesT * 3, 1)
-
-    ctx.globalAlpha = timesAlpha
-    ctx.strokeStyle = BORDER; ctx.lineWidth = 1
-    ctx.beginPath(); ctx.moveTo(halfW, timesY); ctx.lineTo(halfW, timesY + 110); ctx.stroke()
-
-    const countedA = countUpTime(eA.elapsedSeconds, easeInOut(timesT))
-    ctx.fillStyle = colA; ctx.font = '500 10px -apple-system, sans-serif'; ctx.textAlign = 'left'
-    ctx.fillText('EFFORT A', 20, timesY + 20)
-    ctx.fillStyle = colA; ctx.font = '700 36px -apple-system, sans-serif'
-    ctx.fillText(formatTime(countedA), 20, timesY + 58)
-    ctx.fillStyle = DIM; ctx.font = '400 11px -apple-system, sans-serif'
-    ctx.fillText(formatDate(eA.startDate), 20, timesY + 74)
-
-    if (eA.prRank === 1 && timesT > 0.8) {
-      ctx.globalAlpha = timesAlpha * ((timesT - 0.8) / 0.2)
-      roundRect(20, timesY + 82, 28, 16, 8)
-      ctx.fillStyle = 'rgba(234,179,8,0.15)'; ctx.fill()
-      roundRect(20, timesY + 82, 28, 16, 8)
-      ctx.strokeStyle = 'rgba(234,179,8,0.3)'; ctx.lineWidth = 1; ctx.stroke()
-      ctx.fillStyle = GOLD; ctx.font = '600 9px -apple-system, sans-serif'
-      ctx.textAlign = 'center'; ctx.fillText('PR', 34, timesY + 94)
-      ctx.globalAlpha = timesAlpha
-    }
-
-    if (eB) {
-      const countedB = countUpTime(eB.elapsedSeconds, easeInOut(timesT))
-      ctx.fillStyle = colB; ctx.font = '500 10px -apple-system, sans-serif'; ctx.textAlign = 'left'
-      ctx.fillText('EFFORT B', halfW + 20, timesY + 20)
-      ctx.fillStyle = colB; ctx.font = '700 36px -apple-system, sans-serif'
-      ctx.fillText(formatTime(countedB), halfW + 20, timesY + 58)
-      ctx.fillStyle = DIM; ctx.font = '400 11px -apple-system, sans-serif'
-      ctx.fillText(formatDate(eB.startDate), halfW + 20, timesY + 74)
-
-      if (eB.prRank === 1 && timesT > 0.8) {
-        ctx.globalAlpha = timesAlpha * ((timesT - 0.8) / 0.2)
-        roundRect(halfW + 20, timesY + 82, 28, 16, 8)
-        ctx.fillStyle = 'rgba(234,179,8,0.15)'; ctx.fill()
-        roundRect(halfW + 20, timesY + 82, 28, 16, 8)
-        ctx.strokeStyle = 'rgba(234,179,8,0.3)'; ctx.lineWidth = 1; ctx.stroke()
-        ctx.fillStyle = GOLD; ctx.font = '600 9px -apple-system, sans-serif'
-        ctx.textAlign = 'center'; ctx.fillText('PR', halfW + 34, timesY + 94)
-        ctx.globalAlpha = timesAlpha
-      }
-    }
-    ctx.globalAlpha = 1
-
-    // ─── Delta banner ─────────────────────────────────────────────────────────
-    const timeDelta = eB ? eA.elapsedSeconds - eB.elapsedSeconds : 0
-    const deltaColour = timeDelta < 0 ? GREEN : timeDelta > 0 ? RED : WHITE
-
-    if (deltaT > 0) {
-      ctx.globalAlpha = easeInOut(deltaT)
-      const deltaBg = timeDelta < 0 ? 'rgba(34,197,94,0.08)' : timeDelta > 0 ? 'rgba(239,68,68,0.08)' : 'rgba(255,255,255,0.04)'
-      ctx.fillStyle = deltaBg
-      ctx.fillRect(0, timesY + 110, W, 36)
-      ctx.strokeStyle = BORDER; ctx.lineWidth = 1
-      ctx.beginPath(); ctx.moveTo(0, timesY + 110); ctx.lineTo(W, timesY + 110); ctx.stroke()
-      ctx.beginPath(); ctx.moveTo(0, timesY + 146); ctx.lineTo(W, timesY + 146); ctx.stroke()
-      ctx.fillStyle = deltaColour; ctx.font = '700 16px -apple-system, sans-serif'; ctx.textAlign = 'center'
-      ctx.fillText(
-        timeDelta === 0 ? 'Dead heat' : `${timeDelta < 0 ? '▲' : '▼'} ${Math.abs(timeDelta)}s ${timeDelta < 0 ? '— A faster' : '— B faster'}`,
-        W / 2, timesY + 133
-      )
-      ctx.globalAlpha = 1
-    }
-
-    // ─── Countdown over elevation ─────────────────────────────────────────────
-    if (countdownT > 0 && countdownT < 1) {
-      const cd = countdownT * 4
-      let label = ''
-      let pulse = 0
-      if (cd < 1) { label = '3'; pulse = 1 - cd }
-      else if (cd < 2) { label = '2'; pulse = 1 - (cd - 1) }
-      else if (cd < 3) { label = '1'; pulse = 1 - (cd - 2) }
-      else { label = 'GO!'; pulse = cd - 3 }
-
-      const alpha = label === 'GO!'
-        ? Math.min(pulse * 3, 1) * (1 - Math.max((pulse - 0.5) * 2, 0))
-        : Math.min(pulse * 2, 1)
-      const scale = 1 + (1 - pulse) * 0.3
-
-      ctx.globalAlpha = alpha
-      ctx.save()
-      ctx.translate(W / 2, elevStartY + elevH / 2)
-      ctx.scale(scale, scale)
-      ctx.fillStyle = label === 'GO!' ? GREEN : WHITE
-      ctx.font = `900 ${label === 'GO!' ? 52 : 72}px -apple-system, sans-serif`
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'middle'
-      ctx.fillText(label, 0, 0)
-      ctx.textBaseline = 'alphabetic'
-      ctx.restore()
-      ctx.globalAlpha = 1
-    }
-
-    // ─── Racing dots ──────────────────────────────────────────────────────────
-    const tA = Math.min(raceT, 1)
-    const ratioB = eB ? eB.elapsedSeconds / eA.elapsedSeconds : 1
-    const tB = eB ? Math.min(raceT / ratioB, 1) : 1
-
-    if (raceT > 0) {
-      const trailAEnd = Math.floor(tA * (eA.points.length - 1))
-      if (trailAEnd > 0) {
-        ctx.beginPath()
-        for (let i = 0; i <= trailAEnd; i++) {
-          const p = eA.points[i]
-          const x = elevPad + p.distancePct * elevW
-          const y = elevStartY + elevH - ((p.elevationMetres - minElev) / elevRange) * elevH
-          i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)
-        }
-        ctx.strokeStyle = colA === ORANGE ? 'rgba(252,76,2,0.8)' : 'rgba(168,85,247,0.8)'
-        ctx.lineWidth = 2.5; ctx.lineJoin = 'round'; ctx.stroke()
-      }
-
-      if (eB) {
-        const trailBEnd = Math.floor(tB * (eB.points.length - 1))
-        if (trailBEnd > 0) {
-          ctx.beginPath()
-          for (let i = 0; i <= trailBEnd; i++) {
-            const pB = eB.points[i]
-            const pA = eA.points[Math.min(i, eA.points.length - 1)]
-            const x = elevPad + pB.distancePct * elevW
-            const y = elevStartY + elevH - ((pA.elevationMetres - minElev) / elevRange) * elevH
-            i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)
-          }
-          ctx.strokeStyle = colB === ORANGE ? 'rgba(252,76,2,0.8)' : 'rgba(168,85,247,0.8)'
-          ctx.lineWidth = 2.5; ctx.lineJoin = 'round'; ctx.stroke()
-        }
-      }
-
-      const ptA = getPointAt(eA, tA)
-      const dotAx = elevPad + ptA.distancePct * elevW
-      const dotAy = elevStartY + elevH - ((ptA.elevationMetres - minElev) / elevRange) * elevH
-      const glowColA = colA === ORANGE ? 'rgba(252,76,2,' : 'rgba(168,85,247,'
-      const glowA = ctx.createRadialGradient(dotAx, dotAy, 0, dotAx, dotAy, 12)
-      glowA.addColorStop(0, glowColA + '0.5)'); glowA.addColorStop(1, glowColA + '0)')
-      ctx.fillStyle = glowA; ctx.beginPath(); ctx.arc(dotAx, dotAy, 12, 0, Math.PI * 2); ctx.fill()
-      ctx.fillStyle = colA; ctx.beginPath(); ctx.arc(dotAx, dotAy, 5, 0, Math.PI * 2); ctx.fill()
-      ctx.strokeStyle = WHITE; ctx.lineWidth = 1.5; ctx.stroke()
-      ctx.fillStyle = colA; ctx.font = 'bold 10px -apple-system, sans-serif'; ctx.textAlign = 'center'
-      ctx.fillText('A', dotAx, dotAy - 12)
-
-      if (eB) {
-        const ptB = getPointAt(eB, tB)
-        const dotBx = elevPad + ptB.distancePct * elevW
-        const bElevIdx = Math.min(Math.floor(tB * (eA.points.length - 1)), eA.points.length - 1)
-        const dotBy = elevStartY + elevH - ((eA.points[bElevIdx].elevationMetres - minElev) / elevRange) * elevH
-        const glowColB = colB === ORANGE ? 'rgba(252,76,2,' : 'rgba(168,85,247,'
-        const glowB = ctx.createRadialGradient(dotBx, dotBy, 0, dotBx, dotBy, 12)
-        glowB.addColorStop(0, glowColB + '0.5)'); glowB.addColorStop(1, glowColB + '0)')
-        ctx.fillStyle = glowB; ctx.beginPath(); ctx.arc(dotBx, dotBy, 12, 0, Math.PI * 2); ctx.fill()
-        ctx.fillStyle = colB; ctx.beginPath(); ctx.arc(dotBx, dotBy, 5, 0, Math.PI * 2); ctx.fill()
-        ctx.strokeStyle = WHITE; ctx.lineWidth = 1.5; ctx.stroke()
-        ctx.fillStyle = colB; ctx.font = 'bold 10px -apple-system, sans-serif'; ctx.textAlign = 'center'
-        ctx.fillText('B', dotBx, dotBy - 12)
-      }
-    }
-
-    // ─── Time gap tracker — FIXED ─────────────────────────────────────────────
-    // Both riders start at t=0 and race in real time
-    // Wall clock advances. A finishes at eA.elapsedSeconds, B finishes at eB.elapsedSeconds
-    // Gap = distance A has covered vs distance B has covered, expressed in time
-    const gapY = gradeY + gradeH + 28
-    const gapH = 52
-    const gapPad = 16
-    const gapW = W - gapPad * 2
-    const gapAlpha = raceT > 0 ? Math.min(raceT * 4, 1) : 0
-
-    if (gapAlpha > 0 && eB) {
-      ctx.globalAlpha = gapAlpha
-
-      ctx.fillStyle = DIM; ctx.font = '400 9px -apple-system, sans-serif'; ctx.textAlign = 'left'
-      ctx.fillText('TIME GAP', gapPad, gapY)
-
-      // Wall clock time elapsed in the race
-      const maxSecs = Math.max(eA.elapsedSeconds, eB.elapsedSeconds)
-      const wallSecs = raceT * maxSecs
-
-      // How far along has each rider progressed (0-1)
-      const aProgress = Math.min(wallSecs / eA.elapsedSeconds, 1)
-      const bProgress = Math.min(wallSecs / eB.elapsedSeconds, 1)
-
-      const trackY = gapY + 12
-      ctx.fillStyle = BORDER
-      roundRect(gapPad, trackY, gapW, 6, 3); ctx.fill()
-
-      const aDotX = gapPad + aProgress * gapW
-      const glowCA = colA === ORANGE ? 'rgba(252,76,2,' : 'rgba(168,85,247,'
-      const glowTA = ctx.createRadialGradient(aDotX, trackY + 3, 0, aDotX, trackY + 3, 10)
-      glowTA.addColorStop(0, glowCA + '0.4)'); glowTA.addColorStop(1, glowCA + '0)')
-      ctx.fillStyle = glowTA; ctx.beginPath(); ctx.arc(aDotX, trackY + 3, 10, 0, Math.PI * 2); ctx.fill()
-      ctx.fillStyle = colA; ctx.beginPath(); ctx.arc(aDotX, trackY + 3, 5, 0, Math.PI * 2); ctx.fill()
-      ctx.strokeStyle = WHITE; ctx.lineWidth = 1.5; ctx.stroke()
-
-      const bDotX = gapPad + bProgress * gapW
-      const glowCB = colB === ORANGE ? 'rgba(252,76,2,' : 'rgba(168,85,247,'
-      const glowTB = ctx.createRadialGradient(bDotX, trackY + 3, 0, bDotX, trackY + 3, 10)
-      glowTB.addColorStop(0, glowCB + '0.4)'); glowTB.addColorStop(1, glowCB + '0)')
-      ctx.fillStyle = glowTB; ctx.beginPath(); ctx.arc(bDotX, trackY + 3, 10, 0, Math.PI * 2); ctx.fill()
-      ctx.fillStyle = colB; ctx.beginPath(); ctx.arc(bDotX, trackY + 3, 5, 0, Math.PI * 2); ctx.fill()
-      ctx.strokeStyle = WHITE; ctx.lineWidth = 1.5; ctx.stroke()
-
-      if (Math.abs(aDotX - bDotX) > 4) {
-        ctx.strokeStyle = aDotX > bDotX ? GREEN : RED
-        ctx.lineWidth = 2; ctx.setLineDash([3, 2])
-        ctx.beginPath()
-        ctx.moveTo(Math.min(aDotX, bDotX) + 6, trackY + 3)
-        ctx.lineTo(Math.max(aDotX, bDotX) - 6, trackY + 3)
-        ctx.stroke()
-        ctx.setLineDash([])
-      }
-
-      // Gap label: how many seconds ahead is the leading rider
-      // If aProgress > bProgress, A is further along — A leads
-      const aTimeEquiv = aProgress * eA.elapsedSeconds  // seconds A has completed
-      const bTimeEquiv = bProgress * eB.elapsedSeconds  // seconds B has completed
-      // At same wall clock, compare distance covered
-      const aDistCovered = aProgress * eA.segment.distanceMetres
-      const bDistCovered = bProgress * eB.segment.distanceMetres
-      const aAhead = aDistCovered > bDistCovered
-
-      // Express gap in seconds: how long would it take the trailing rider to cover the gap distance
-      const gapMetres = Math.abs(aDistCovered - bDistCovered)
-      const trailingSpeedMs = aAhead
-        ? (eB.segment.distanceMetres / eB.elapsedSeconds)
-        : (eA.segment.distanceMetres / eA.elapsedSeconds)
-      const gapSecs = trailingSpeedMs > 0 ? Math.round(gapMetres / trailingSpeedMs) : 0
-
-      const gapLabel = gapSecs < 2 ? 'Neck and neck'
-        : `${gapSecs}s ${aAhead ? 'A leads' : 'B leads'}`
-      const gapLabelColour = gapSecs < 2 ? WHITE : aAhead
-        ? (colA === ORANGE ? GREEN : RED)
-        : (colB === ORANGE ? GREEN : RED)
-
-      ctx.fillStyle = gapLabelColour; ctx.font = 'bold 13px -apple-system, sans-serif'; ctx.textAlign = 'center'
-      ctx.fillText(gapLabel, W / 2, trackY + 30)
-
-      ctx.fillStyle = DIM; ctx.font = 'bold 9px -apple-system, sans-serif'
-      ctx.textAlign = 'left'; ctx.fillText('START', gapPad, trackY + 30)
-      ctx.textAlign = 'right'; ctx.fillText('FINISH', W - gapPad, trackY + 30)
-
-      ctx.globalAlpha = 1
-    }
-
-    // ─── Live speed + pace — larger and more prominent ────────────────────────
-    const liveY = gapY + gapH + 8
-    const liveH = 60
-    const liveAlpha = raceT > 0 ? Math.min(raceT * 4, 1) : 0
-
-    if (liveAlpha > 0) {
-      ctx.globalAlpha = liveAlpha
-      const halfLive = W / 2
-
-      ctx.strokeStyle = BORDER; ctx.lineWidth = 1
-      ctx.beginPath(); ctx.moveTo(halfLive, liveY); ctx.lineTo(halfLive, liveY + liveH); ctx.stroke()
-
-      const ptACurrent = getPointAt(eA, tA)
-      const ptBCurrent = eB ? getPointAt(eB, tB) : null
-
-      // A side
-      ctx.fillStyle = colA; ctx.font = 'bold 9px -apple-system, sans-serif'; ctx.textAlign = 'left'
-      ctx.fillText('LIVE SPEED', 20, liveY + 12)
-      ctx.fillStyle = WHITE; ctx.font = 'bold 26px -apple-system, sans-serif'
-      ctx.fillText(`${ptACurrent.speedKph.toFixed(1)}`, 20, liveY + 40)
-      ctx.fillStyle = MUTED; ctx.font = '400 10px -apple-system, sans-serif'
-      ctx.fillText(`km/h`, 20, liveY + 54)
-      ctx.fillStyle = DIM; ctx.font = '400 10px -apple-system, sans-serif'
-      ctx.fillText(formatPace(ptACurrent.speedKph), 80, liveY + 54)
-
-      // B side
-      if (ptBCurrent) {
-        ctx.fillStyle = colB; ctx.font = 'bold 9px -apple-system, sans-serif'; ctx.textAlign = 'left'
-        ctx.fillText('LIVE SPEED', halfLive + 20, liveY + 12)
-        ctx.fillStyle = WHITE; ctx.font = 'bold 26px -apple-system, sans-serif'
-        ctx.fillText(`${ptBCurrent.speedKph.toFixed(1)}`, halfLive + 20, liveY + 40)
-        ctx.fillStyle = MUTED; ctx.font = '400 10px -apple-system, sans-serif'
-        ctx.fillText(`km/h`, halfLive + 20, liveY + 54)
-        ctx.fillStyle = DIM; ctx.font = '400 10px -apple-system, sans-serif'
-        ctx.fillText(formatPace(ptBCurrent.speedKph), halfLive + 80, liveY + 54)
-      }
-      ctx.globalAlpha = 1
-    }
-
-    // ─── Tug of war bars — fallback to effort averages when missing ───────────
-    const barsStartY = liveY + liveH + 8
-    const barW = W - 40
-    const barMid = W / 2
-    const barAlpha = raceT > 0 ? Math.min(raceT * 4, 1) : 0
-
-    ctx.globalAlpha = barAlpha
-
-    // Running averages — fall back to effort-level average when per-point unavailable
-    const runAvgHrA = raceT > 0 ? avgUpTo(eA, tA, p => p.heartRate) : null
-    const runAvgHrB = raceT > 0 && eB ? avgUpTo(eB, tB, p => p.heartRate) : null
-    const avgHrA = runAvgHrA ?? (eA.averageHeartRate ?? null)
-    const avgHrB = runAvgHrB ?? (eB?.averageHeartRate ?? null)
-
-    const runAvgSpeedA = raceT > 0 ? avgUpTo(eA, tA, p => p.speedKph) : null
-    const runAvgSpeedB = raceT > 0 && eB ? avgUpTo(eB, tB, p => p.speedKph) : null
-    const avgSpeedA = runAvgSpeedA ?? eA.averageSpeedKph
-    const avgSpeedB = runAvgSpeedB ?? eB?.averageSpeedKph ?? null
-
-    const runAvgPowerA = raceT > 0 ? avgUpTo(eA, tA, p => p.powerWatts) : null
-    const runAvgPowerB = raceT > 0 && eB ? avgUpTo(eB, tB, p => p.powerWatts) : null
-    const avgPowerA = runAvgPowerA ?? (eA.averagePowerWatts ?? null)
-    const avgPowerB = runAvgPowerB ?? (eB?.averagePowerWatts ?? null)
-
-    const npA = raceT > 0 ? normalisedPowerUpTo(eA, tA) : null
-    const npB = raceT > 0 && eB ? normalisedPowerUpTo(eB, tB) : null
-
-    let bY = barsStartY
-
-    function drawTugBar(
-      label: string,
-      valA: number | null, valB: number | null,
-      fmtA: string, fmtB: string,
-      subA?: string, subB?: string,
-      isEstimateA?: boolean, isEstimateB?: boolean,
-    ) {
-      if (valA == null && valB == null) return
-
-      ctx.fillStyle = colA; ctx.font = '500 13px -apple-system, sans-serif'; ctx.textAlign = 'left'
-      ctx.fillText(valA != null ? fmtA : '—', 20, bY + 16)
-      if (subA) {
-        ctx.fillStyle = DIM; ctx.font = '400 9px -apple-system, sans-serif'
-        ctx.fillText(subA, 20, bY + 27)
-      }
-      if (isEstimateA && valA != null) {
-        ctx.fillStyle = DIM; ctx.font = '400 8px -apple-system, sans-serif'
-        ctx.fillText('avg', 20, bY + (subA ? 37 : 27))
-      }
-
-      ctx.fillStyle = DIM; ctx.font = '400 10px -apple-system, sans-serif'; ctx.textAlign = 'center'
-      ctx.fillText(label, barMid, bY + 10)
-
-      ctx.fillStyle = colB; ctx.font = '500 13px -apple-system, sans-serif'; ctx.textAlign = 'right'
-      ctx.fillText(valB != null ? fmtB : '—', W - 20, bY + 16)
-      if (subB) {
-        ctx.fillStyle = DIM; ctx.font = '400 9px -apple-system, sans-serif'; ctx.textAlign = 'right'
-        ctx.fillText(subB, W - 20, bY + 27)
-      }
-      if (isEstimateB && valB != null) {
-        ctx.fillStyle = DIM; ctx.font = '400 8px -apple-system, sans-serif'; ctx.textAlign = 'right'
-        ctx.fillText('avg', W - 20, bY + (subB ? 37 : 27))
-      }
-
-      const trackY = bY + (subA || subB ? 36 : 22)
-      ctx.fillStyle = BORDER
-      roundRect(20, trackY, barW, 6, 3); ctx.fill()
-
-      const total = (valA ?? 0) + (valB ?? 0)
-      const animEase = easeInOut(Math.min(raceT * 1.5, 1))
-
-      if (total > 0) {
-        if (valA != null) {
-          const wA = (valA / total) * barW * animEase
-          ctx.fillStyle = colA
-          roundRect(20, trackY, wA, 6, 2); ctx.fill()
-        }
-        if (valB != null) {
-          const wB = (valB / total) * barW * animEase
-          ctx.fillStyle = colB
-          roundRect(20 + barW - wB, trackY, wB, 6, 2); ctx.fill()
-        }
-      }
-
-      bY += (subA || subB ? 52 : 38)
-      ctx.strokeStyle = BORDER; ctx.lineWidth = 1
-      ctx.beginPath(); ctx.moveTo(20, bY - 4); ctx.lineTo(W - 20, bY - 4); ctx.stroke()
-    }
-
-    drawTugBar('AVG HR', avgHrA, avgHrB,
-      avgHrA != null ? `${Math.round(avgHrA)} bpm` : '—',
-      avgHrB != null ? `${Math.round(avgHrB)} bpm` : '—',
-      undefined, undefined,
-      runAvgHrA == null && avgHrA != null,
-      runAvgHrB == null && avgHrB != null,
-    )
-    drawTugBar('AVG SPEED', avgSpeedA, avgSpeedB,
-      avgSpeedA != null ? `${avgSpeedA.toFixed(1)} km/h` : '—',
-      avgSpeedB != null ? `${avgSpeedB.toFixed(1)} km/h` : '—',
-    )
-    if (avgPowerA != null || avgPowerB != null) {
-      drawTugBar('AVG POWER', avgPowerA, avgPowerB,
-        avgPowerA != null ? `${Math.round(avgPowerA)}W${!sA.device_watts ? ' est.' : ''}` : '—',
-        avgPowerB != null ? `${Math.round(avgPowerB)}W${!sB?.device_watts ? ' est.' : ''}` : '—',
-        npA != null ? `NP ${npA}W` : undefined,
-        npB != null ? `NP ${npB}W` : undefined,
-        runAvgPowerA == null && avgPowerA != null,
-        runAvgPowerB == null && avgPowerB != null,
-      )
-    }
-
-    ctx.globalAlpha = 1
-
-    // ─── Footer ───────────────────────────────────────────────────────────────
-    const footAlpha = holdT > 0 ? easeInOut(holdT) : (raceT > 0.8 ? (raceT - 0.8) / 0.2 : 0)
-    ctx.globalAlpha = footAlpha
-    ctx.strokeStyle = BORDER; ctx.lineWidth = 1
-    ctx.beginPath(); ctx.moveTo(0, H - 34); ctx.lineTo(W, H - 34); ctx.stroke()
-    ctx.fillStyle = '#555555'; ctx.font = '700 11px -apple-system, sans-serif'; ctx.textAlign = 'left'
-    ctx.fillText('SEGMENTIQ', 20, H - 14)
-    ctx.fillStyle = '#444444'; ctx.font = '400 10px -apple-system, sans-serif'; ctx.textAlign = 'right'
-    ctx.fillText('segmentiq.vercel.app', W - 20, H - 14)
-    ctx.globalAlpha = 1
-
+    drawAnimation(ctx, t, eA, eB, sA, sB, minElev, elevRange, s, W, H, safeTop, safeH)
   }, [])
-  const animate = useCallback((duration: number, startProgress: number, onComplete?: () => void) => {
+
+  const animate = useCallback((duration: number, startProgress: number, exportMode = false, onComplete?: () => void) => {
     const startTime = performance.now()
     const startT = startProgress
 
@@ -802,12 +846,12 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
       const elapsed = now - startTime
       const t = Math.min(startT + elapsed / duration, 1)
       progressRef.current = t
-      setProgress(t)
-      drawFrame(t)
+      if (!exportMode) setProgress(t)
+      drawFrame(t, exportMode)
       if (t < 1) {
         animFrameRef.current = requestAnimationFrame(frame)
       } else {
-        setPlaying(false)
+        if (!exportMode) setPlaying(false)
         progressRef.current = 0
         onComplete?.()
       }
@@ -822,7 +866,7 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
     const remainingDuration = PREVIEW_DURATION * (1 - currentT)
     progressRef.current = currentT
     setPlaying(true)
-    animate(remainingDuration, currentT)
+    animate(remainingDuration, currentT, false)
   }
 
   function pause() {
@@ -835,54 +879,67 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
     setPlaying(false)
     progressRef.current = t
     setProgress(t)
-    drawFrame(t)
+    drawFrame(t, false)
   }
 
   function restart() {
     cancelAnimationFrame(animFrameRef.current)
     progressRef.current = 0
     setProgress(0)
-    drawFrame(0)
+    drawFrame(0, false)
     setPlaying(false)
   }
 
-  useEffect(() => { drawFrame(0) }, [drawFrame])
+  useEffect(() => { drawFrame(0, false) }, [drawFrame])
   useEffect(() => { return () => cancelAnimationFrame(animFrameRef.current) }, [])
 
   async function exportVideo() {
     const canvas = canvasRef.current
     if (!canvas) return
+
     if (!window.MediaRecorder || !MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
       setExportError('Video export requires Chrome or Firefox. Safari is not supported.')
       return
     }
+
     setExporting(true)
     setExportError(null)
     cancelAnimationFrame(animFrameRef.current)
     progressRef.current = 0
 
+    // Switch canvas to export dimensions
+    drawFrame(0, true)
+
     const stream = canvas.captureStream(30)
-    const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8', videoBitsPerSecond: 6000000 })
+    const recorder = new MediaRecorder(stream, {
+      mimeType: 'video/webm;codecs=vp8',
+      videoBitsPerSecond: 12000000,  // higher bitrate for 1080p
+    })
     const chunks: Blob[] = []
     recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
     recorder.onstop = () => {
       const blob = new Blob(chunks, { type: 'video/webm' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
-      a.href = url; a.download = 'segmentiq-replay.webm'; a.click()
+      a.href = url; a.download = 'segmentiq-story.webm'; a.click()
       URL.revokeObjectURL(url)
       setExporting(false)
-      drawFrame(progressRef.current)
+      // Restore preview dimensions
+      drawFrame(progressRef.current, false)
     }
+
     recorder.start()
-    animate(EXPORT_DURATION, 0, () => { recorder.stop() })
+    animate(EXPORT_DURATION, 0, true, () => { recorder.stop() })
   }
 
   const progressPct = Math.round(progress * 100)
 
   return (
     <div className="bg-surface border border-border rounded-2xl p-4 mb-6">
-      <div className="text-xs text-text-muted mb-3">Segment replay</div>
+      <div className="flex items-center justify-between mb-3">
+        <div className="text-xs text-text-muted">Segment replay</div>
+        <div className="text-xs text-text-muted">Export: 1080×1920 Instagram Story</div>
+      </div>
       <canvas
         ref={canvasRef}
         width={390}
@@ -911,12 +968,14 @@ function SegmentReplay({ effortA, effortB, summaryA, summaryB }: SegmentReplayPr
             exporting ? 'bg-surface border border-border text-text-muted cursor-not-allowed' : 'bg-strava hover:bg-strava-dark text-white'
           }`}
         >
-          {exporting ? 'Recording… animation will complete automatically' : '⬇ Export replay video'}
+          {exporting ? 'Recording 1080×1920 story…' : '⬇ Export Instagram Story (1080×1920)'}
         </button>
         <button onClick={restart} className="w-10 h-10 rounded-xl border border-border text-text-muted hover:text-white transition-colors text-sm">↺</button>
       </div>
       {exportError && <div className="mt-2 text-xs text-red-400">{exportError}</div>}
-      <div className="mt-2 text-xs text-text-muted">Preview plays at 15s · Export records full 30s portrait video</div>
+      <div className="mt-2 text-xs text-text-muted">
+        Preview at 390×700 · Export records full 30s at 1080×1920 for Instagram Stories
+      </div>
     </div>
   )
 }
@@ -1069,8 +1128,7 @@ function drawExportCard(
     mY += 32
   }
 
-  drawStatBar('AVG HR',
-    effortA.averageHeartRate, effortB.averageHeartRate,
+  drawStatBar('AVG HR', effortA.averageHeartRate, effortB.averageHeartRate,
     effortA.averageHeartRate != null ? `${Math.round(effortA.averageHeartRate)} bpm` : '—',
     effortB.averageHeartRate != null ? `${Math.round(effortB.averageHeartRate)} bpm` : '—')
   drawStatBar('AVG SPEED', effortA.averageSpeedKph, effortB.averageSpeedKph,
