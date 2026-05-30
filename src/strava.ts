@@ -107,10 +107,6 @@ async function getValidAccessToken(athleteId: number): Promise<string> {
 }
 
 // ─── Safe JSON parsing ────────────────────────────────────────────────────────
-// Strava IDs are 19-digit integers that exceed JavaScript's Number.MAX_SAFE_INTEGER.
-// json-bigint does not reliably preserve these in all Node.js environments.
-// The only guaranteed fix is a regex replacement on the raw JSON text that
-// wraps all large integer ID values in quotes BEFORE JSON.parse ever sees them.
 
 function parseStravaJson(text: string): any {
   const safeText = text
@@ -162,6 +158,8 @@ async function stravaRequest<T>(athleteId: number, url: string): Promise<T> {
   return parseStravaJson(text) as T
 }
 
+// ─── Segment endpoints ────────────────────────────────────────────────────────
+
 export async function fetchStarredSegments(
   athleteId: number,
   perPage = 50
@@ -188,10 +186,6 @@ export async function fetchEffortStreams(
   startIndex: number,
   endIndex: number
 ): Promise<any> {
-  // No resolution parameter — use Strava's native resolution so that
-  // start_index and end_index from the segment effort align correctly.
-  // Using resolution=high causes Strava to resample the stream which
-  // shifts the indices and produces incorrect segment slices.
   const url = `${STRAVA_BASE}/activities/${activityId}/streams?` +
     `keys=${STREAM_KEYS}&key_by_type=true&series_type=distance`
 
@@ -235,38 +229,37 @@ export async function fetchSegmentEfforts(
   )
   return efforts.sort((a: any, b: any) => a.elapsed_time - b.elapsed_time)
 }
-// ─── Activity list ────────────────────────────────────────────────────────────
 
-export async function fetchRecentActivities(athleteId: number, page = 1, perPage = 30): Promise<any[]> {
-  const token = await getValidToken(athleteId)
-  const res = await fetchWithRetry(
-    `https://www.strava.com/api/v3/athlete/activities?page=${page}&per_page=${perPage}`,
-    { headers: { Authorization: `Bearer ${token}` } }
+// ─── Activity endpoints ───────────────────────────────────────────────────────
+
+export async function fetchRecentActivities(
+  athleteId: number,
+  page = 1,
+  perPage = 30
+): Promise<any[]> {
+  return stravaRequest<any[]>(
+    athleteId,
+    `${STRAVA_BASE}/athlete/activities?page=${page}&per_page=${perPage}`
   )
-  if (!res.ok) await throwStravaError(res)
-  const text = await res.text()
-  return JSON.parse(parseStravaJson(text))
 }
 
-export async function fetchActivity(athleteId: number, activityId: string): Promise<any> {
-  const token = await getValidToken(athleteId)
-  const res = await fetchWithRetry(
-    `https://www.strava.com/api/v3/activities/${activityId}`,
-    { headers: { Authorization: `Bearer ${token}` } }
+export async function fetchActivity(
+  athleteId: number,
+  activityId: string
+): Promise<any> {
+  return stravaRequest<any>(
+    athleteId,
+    `${STRAVA_BASE}/activities/${activityId}`
   )
-  if (!res.ok) await throwStravaError(res)
-  const text = await res.text()
-  return JSON.parse(parseStravaJson(text))
 }
 
-export async function fetchActivityStreams(athleteId: number, activityId: string): Promise<any> {
-  const token = await getValidToken(athleteId)
+export async function fetchActivityStreams(
+  athleteId: number,
+  activityId: string
+): Promise<any> {
   const keys = 'time,distance,altitude,heartrate,watts,cadence,velocity_smooth,latlng'
-  const res = await fetchWithRetry(
-    `https://www.strava.com/api/v3/activities/${activityId}/streams?keys=${keys}&key_by_type=true`,
-    { headers: { Authorization: `Bearer ${token}` } }
+  return stravaRequest<any>(
+    athleteId,
+    `${STRAVA_BASE}/activities/${activityId}/streams?keys=${keys}&key_by_type=true`
   )
-  if (!res.ok) await throwStravaError(res)
-  const text = await res.text()
-  return JSON.parse(parseStravaJson(text))
 }
