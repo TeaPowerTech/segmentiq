@@ -1,3 +1,9 @@
+import {
+  fetchRecentActivities,
+  fetchActivity,
+  fetchActivityStreams,
+} from './strava'
+import { normaliseActivity } from './normalise'
 import express, { Request, Response } from 'express'
 import cookieParser from 'cookie-parser'
 import { Pool } from 'pg'
