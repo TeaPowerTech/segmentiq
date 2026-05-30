@@ -114,7 +114,7 @@ function drawActivityCard(
   const WHITE = '#ffffff'
   const MUTED = '#888888'
   const DIM = '#444444'
-  const DIMMER = '#333333'
+  const DIMMER = '#555555'
   const GREEN = '#22C55E'
   const RED = '#EF4444'
   const GOLD = '#EAB308'
@@ -142,70 +142,83 @@ function drawActivityCard(
 
   const PAD = 16
 
-  // Fixed layout — all in unscaled 390px coords, no overlaps
-  const HEADER_Y = 0
+  // Layout constants — no overlaps
   const HEADER_H = 68
   const STATS_Y = 68
-  const STATS_H = 130
-  const ELEV_Y = 198
-  const ELEV_H = 130
-  const GRADE_Y = 336
+  const STATS_H = 110
+  const ELEV_Y = 178
+  const ELEV_H = 140
+  const GRADE_Y = 326
   const GRADE_H = 18
-  const LEGEND_Y = 362
-  const LIVE_Y = 376
+  const LEGEND_Y = 352
+  const LIVE_Y = 374
+  const LIVE_H = 110
+  const MAX_Y = 494
+  const MAX_H = 90
   const FOOTER_Y = 686
 
-  // Animation phases — countdown FIRST
-  const PHASE_COUNTDOWN_END = 0.18
-  const PHASE_HEADER_END = 0.26
-  const PHASE_STATS_END = 0.46
-  const PHASE_RACE_END = 0.92
+  // Pick hero stat — most impressive of distance, elevation, time
+  const heroStat = activity.totalElevationGain >= 500
+    ? { value: `${Math.round(activity.totalElevationGain)}m`, label: 'ELEVATION CLIMBED' }
+    : activity.distanceMetres >= 20000
+    ? { value: formatDistance(activity.distanceMetres), label: 'COVERED TODAY' }
+    : { value: formatTime(activity.movingTimeSeconds), label: 'ON THE BIKE' }
 
-  const countdownT = Math.min(t / PHASE_COUNTDOWN_END, 1)
-  const headerAlpha = t < PHASE_COUNTDOWN_END ? 0
-    : Math.min((t - PHASE_COUNTDOWN_END) / (PHASE_HEADER_END - PHASE_COUNTDOWN_END), 1)
+  // Phase timing
+  const PHASE_HERO_END = 0.06       // 0–6%:  hero stat full screen
+  const PHASE_HEADER_END = 0.14     // 6–14%: header + elev fade in + countdown
+  const PHASE_STATS_END = 0.32      // 14–32%: stats count up
+  const PHASE_RACE_END = 0.88       // 32–88%: dot races
+  const PHASE_COMPLETE_END = 0.95   // 88–95%: COMPLETE flash
+  // 95–100%: hold + footer
+
+  const heroT = Math.min(t / PHASE_HERO_END, 1)
+  const headerAlpha = t < PHASE_HERO_END ? 0
+    : Math.min((t - PHASE_HERO_END) / (PHASE_HEADER_END - PHASE_HERO_END), 1)
+  const countdownT = t < PHASE_HERO_END ? 0
+    : Math.min((t - PHASE_HERO_END) / (PHASE_HEADER_END - PHASE_HERO_END), 1)
   const statsT = t < PHASE_HEADER_END ? 0
     : Math.min((t - PHASE_HEADER_END) / (PHASE_STATS_END - PHASE_HEADER_END), 1)
   const raceT = t < PHASE_STATS_END ? 0
     : Math.min((t - PHASE_STATS_END) / (PHASE_RACE_END - PHASE_STATS_END), 1)
-  const holdT = t < PHASE_RACE_END ? 0
-    : Math.min((t - PHASE_RACE_END) / (1 - PHASE_RACE_END), 1)
+  const completeT = t < PHASE_RACE_END ? 0
+    : Math.min((t - PHASE_RACE_END) / (PHASE_COMPLETE_END - PHASE_RACE_END), 1)
+  const holdT = t < PHASE_COMPLETE_END ? 0
+    : Math.min((t - PHASE_COMPLETE_END) / (1 - PHASE_COMPLETE_END), 1)
 
   // Orange left accent
   ctx.fillStyle = ORANGE
   ctx.fillRect(0, safeTop, r(4), r(700))
 
-  // Countdown — 3, 2, 1, GO on black before anything else
-  if (countdownT < 1) {
-    const cd = countdownT * 4
-    let label = ''
-    let pulse = 0
-    if (cd < 1) { label = '3'; pulse = 1 - cd }
-    else if (cd < 2) { label = '2'; pulse = 1 - (cd - 1) }
-    else if (cd < 3) { label = '1'; pulse = 1 - (cd - 2) }
-    else { label = 'GO!'; pulse = cd - 3 }
-
-    const alpha = label === 'GO!'
-      ? Math.min(pulse * 3, 1) * (1 - Math.max((pulse - 0.5) * 2, 0))
-      : Math.min(pulse * 2, 1)
-    const scale = 1 + (1 - pulse) * 0.4
-
+  // ─── Hero stat — full screen opener ───────────────────────────────────────
+  if (heroT < 1 || t < PHASE_HERO_END + 0.01) {
+    const alpha = heroT < 0.3
+      ? heroT / 0.3
+      : heroT > 0.7 ? 1 - (heroT - 0.7) / 0.3 : 1
     ctx.globalAlpha = alpha
-    ctx.save()
-    ctx.translate(r(195), ry(350))
-    ctx.scale(scale, scale)
-    ctx.fillStyle = label === 'GO!' ? GREEN : WHITE
-    ctx.font = `900 ${r(label === 'GO!' ? 64 : 96)}px -apple-system, sans-serif`
+
+    // Large hero number centred
+    ctx.fillStyle = ORANGE
+    ctx.font = `900 ${r(72)}px -apple-system, sans-serif`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText(label, 0, 0)
+    ctx.fillText(heroStat.value, r(195), ry(330))
+
+    ctx.fillStyle = WHITE
+    ctx.font = `500 ${r(16)}px -apple-system, sans-serif`
+    ctx.fillText(heroStat.label, r(195), ry(400))
+
+    ctx.fillStyle = MUTED
+    ctx.font = `400 ${r(12)}px -apple-system, sans-serif`
+    ctx.fillText(activity.name, r(195), ry(428))
+
     ctx.textBaseline = 'alphabetic'
-    ctx.restore()
     ctx.globalAlpha = 1
-    if (countdownT < 0.95) return
+
+    if (t < PHASE_HERO_END) return
   }
 
-  // Elevation profile — always visible after countdown
+  // ─── Elevation profile — visible from header phase ─────────────────────────
   ctx.globalAlpha = headerAlpha
 
   const elevPad = PAD
@@ -229,6 +242,17 @@ function drawActivityCard(
   ctx.beginPath()
   elevPts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y))
   ctx.strokeStyle = ORANGE; ctx.lineWidth = r(1.5); ctx.lineJoin = 'round'; ctx.stroke()
+
+  // Faint start position dot during pre-race phases
+  if (raceT === 0) {
+    const startPt = elevPts[0]
+    const pulse = Math.sin(t * Math.PI * 8) * 0.3 + 0.7
+    ctx.globalAlpha = headerAlpha * pulse * 0.6
+    ctx.fillStyle = WHITE
+    ctx.beginPath(); ctx.arc(startPt.x, startPt.y, r(5), 0, Math.PI * 2); ctx.fill()
+    ctx.strokeStyle = ORANGE; ctx.lineWidth = r(2); ctx.stroke()
+    ctx.globalAlpha = headerAlpha
+  }
 
   // Grade profile
   ctx.fillStyle = DIM
@@ -266,7 +290,7 @@ function drawActivityCard(
 
   ctx.globalAlpha = 1
 
-  // Header
+  // ─── Header ───────────────────────────────────────────────────────────────
   ctx.globalAlpha = headerAlpha
   ctx.fillStyle = SURFACE
   ctx.fillRect(0, safeTop, W, r(HEADER_H))
@@ -284,12 +308,45 @@ function drawActivityCard(
   ctx.font = `400 ${r(11)}px -apple-system, sans-serif`
   ctx.fillText(formatDate(activity.startDate), r(PAD + 4), ry(54))
   ctx.fillStyle = DIMMER
-  ctx.font = `600 ${r(11)}px -apple-system, sans-serif`
+  ctx.font = `700 ${r(11)}px -apple-system, sans-serif`
   ctx.textAlign = 'right'
   ctx.fillText('SEGMENTIQ', r(390 - PAD), ry(36))
   ctx.globalAlpha = 1
 
-  // Stats count up
+  // ─── Countdown overlaid on elevation ──────────────────────────────────────
+  if (countdownT > 0 && countdownT < 1) {
+    const cd = countdownT * 4
+    let label = ''
+    let phaseProgress = 0
+    if (cd < 1) { label = '3'; phaseProgress = cd }
+    else if (cd < 2) { label = '2'; phaseProgress = cd - 1 }
+    else if (cd < 3) { label = '1'; phaseProgress = cd - 2 }
+    else { label = 'GO!'; phaseProgress = cd - 3 }
+
+    // Hold white for 60% then fade — fixes invisible "1"
+    const alpha = label === 'GO!'
+      ? Math.min(phaseProgress * 4, 1) * (1 - Math.max((phaseProgress - 0.5) * 2, 0))
+      : phaseProgress < 0.6
+        ? Math.min(phaseProgress * 5, 1)
+        : 1 - ((phaseProgress - 0.6) / 0.4)
+
+    const scale = 1 + (1 - phaseProgress) * 0.25
+
+    ctx.globalAlpha = alpha
+    ctx.save()
+    ctx.translate(r(195), ry(ELEV_Y + ELEV_H / 2))
+    ctx.scale(scale, scale)
+    ctx.fillStyle = label === 'GO!' ? GREEN : WHITE
+    ctx.font = `900 ${r(label === 'GO!' ? 64 : 88)}px -apple-system, sans-serif`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(label, 0, 0)
+    ctx.textBaseline = 'alphabetic'
+    ctx.restore()
+    ctx.globalAlpha = 1
+  }
+
+  // ─── Stats count up ───────────────────────────────────────────────────────
   if (statsT > 0) {
     ctx.globalAlpha = Math.min(statsT * 4, 1)
 
@@ -297,36 +354,36 @@ function drawActivityCard(
     ctx.fillStyle = ORANGE
     ctx.font = `700 ${r(44)}px -apple-system, sans-serif`
     ctx.textAlign = 'center'
-    ctx.fillText(formatTime(countedTime), r(195), ry(STATS_Y + 50))
+    ctx.fillText(formatTime(countedTime), r(195), ry(STATS_Y + 48))
     ctx.fillStyle = MUTED
     ctx.font = `400 ${r(10)}px -apple-system, sans-serif`
-    ctx.fillText('MOVING TIME', r(195), ry(STATS_Y + 64))
+    ctx.fillText('MOVING TIME', r(195), ry(STATS_Y + 62))
 
-    const subY = STATS_Y + 78
+    const subY = STATS_Y + 74
     const thirdW = 390 / 3
     const countedDist = countUpNum(activity.distanceMetres, statsT)
     const countedElev = countUpNum(activity.totalElevationGain, statsT)
 
     ctx.strokeStyle = BORDER; ctx.lineWidth = 1
-    ctx.beginPath(); ctx.moveTo(r(thirdW), ry(subY)); ctx.lineTo(r(thirdW), ry(subY + 48)); ctx.stroke()
-    ctx.beginPath(); ctx.moveTo(r(thirdW * 2), ry(subY)); ctx.lineTo(r(thirdW * 2), ry(subY + 48)); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(r(thirdW), ry(subY)); ctx.lineTo(r(thirdW), ry(subY + 40)); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(r(thirdW * 2), ry(subY)); ctx.lineTo(r(thirdW * 2), ry(subY + 40)); ctx.stroke()
 
     ctx.fillStyle = WHITE
-    ctx.font = `700 ${r(22)}px -apple-system, sans-serif`
+    ctx.font = `700 ${r(20)}px -apple-system, sans-serif`
     ctx.textAlign = 'center'
-    ctx.fillText(formatDistance(countedDist), r(thirdW * 0.5), ry(subY + 26))
-    ctx.fillText(`${Math.round(countedElev)}m`, r(thirdW * 1.5), ry(subY + 26))
-    ctx.fillText(`${(activity.averageSpeedKph ?? 0).toFixed(1)}`, r(thirdW * 2.5), ry(subY + 26))
+    ctx.fillText(formatDistance(countedDist), r(thirdW * 0.5), ry(subY + 22))
+    ctx.fillText(`${Math.round(countedElev)}m`, r(thirdW * 1.5), ry(subY + 22))
+    ctx.fillText(`${(activity.averageSpeedKph ?? 0).toFixed(1)}`, r(thirdW * 2.5), ry(subY + 22))
 
     ctx.fillStyle = MUTED
     ctx.font = `400 ${r(9)}px -apple-system, sans-serif`
-    ctx.fillText('DISTANCE', r(thirdW * 0.5), ry(subY + 42))
-    ctx.fillText('ELEVATION', r(thirdW * 1.5), ry(subY + 42))
-    ctx.fillText('AVG KM/H', r(thirdW * 2.5), ry(subY + 42))
+    ctx.fillText('DISTANCE', r(thirdW * 0.5), ry(subY + 36))
+    ctx.fillText('ELEVATION', r(thirdW * 1.5), ry(subY + 36))
+    ctx.fillText('AVG SPEED', r(thirdW * 2.5), ry(subY + 36))
     ctx.globalAlpha = 1
   }
 
-  // Racing dot + trail
+  // ─── Racing dot + trail ───────────────────────────────────────────────────
   if (raceT > 0) {
     const trailEnd = Math.floor(raceT * (activity.points.length - 1))
     if (trailEnd > 0) {
@@ -337,8 +394,8 @@ function drawActivityCard(
         const y = ry(ELEV_Y + ELEV_H - ((p.elevationMetres - minElev) / elevRange) * ELEV_H)
         i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)
       }
-      ctx.strokeStyle = 'rgba(255,255,255,0.65)'
-      ctx.lineWidth = r(2); ctx.lineJoin = 'round'; ctx.stroke()
+      ctx.strokeStyle = 'rgba(255,255,255,0.7)'
+      ctx.lineWidth = r(2.5); ctx.lineJoin = 'round'; ctx.stroke()
     }
 
     const pt = getPointAt(activity.points, raceT)
@@ -355,8 +412,8 @@ function drawActivityCard(
     ctx.strokeStyle = ORANGE; ctx.lineWidth = r(2); ctx.stroke()
   }
 
-  // Live rolling counters
-  if (raceT > 0) {
+  // ─── Live rolling counters ────────────────────────────────────────────────
+  if (raceT > 0 && completeT === 0) {
     ctx.globalAlpha = Math.min(raceT * 5, 1)
 
     const pt = getPointAt(activity.points, raceT)
@@ -379,7 +436,7 @@ function drawActivityCard(
       const cx = i * colW
       if (i > 0) {
         ctx.strokeStyle = BORDER; ctx.lineWidth = 1
-        ctx.beginPath(); ctx.moveTo(r(cx), ry(LIVE_Y)); ctx.lineTo(r(cx), ry(LIVE_Y + 70)); ctx.stroke()
+        ctx.beginPath(); ctx.moveTo(r(cx), ry(LIVE_Y)); ctx.lineTo(r(cx), ry(LIVE_Y + 68)); ctx.stroke()
       }
       ctx.fillStyle = ORANGE
       ctx.font = `600 ${r(9)}px -apple-system, sans-serif`
@@ -394,7 +451,7 @@ function drawActivityCard(
     })
 
     // Distance / elevation / remaining
-    const counterY = LIVE_Y + 74
+    const counterY = LIVE_Y + 72
     ctx.strokeStyle = BORDER; ctx.lineWidth = 1
     ctx.beginPath(); ctx.moveTo(0, ry(counterY)); ctx.lineTo(W, ry(counterY)); ctx.stroke()
 
@@ -417,20 +474,90 @@ function drawActivityCard(
       ctx.fillText(item.value, r(item.x), ry(counterY + 32))
     })
 
+    // Max stats callout
+    if (raceT > 0.3) {
+      const maxAlpha = Math.min((raceT - 0.3) / 0.2, 1)
+      ctx.globalAlpha = maxAlpha
+      ctx.strokeStyle = BORDER; ctx.lineWidth = 1
+      ctx.beginPath(); ctx.moveTo(0, ry(MAX_Y)); ctx.lineTo(W, ry(MAX_Y)); ctx.stroke()
+
+      const maxItems: { label: string; value: string }[] = []
+      if (activity.maxSpeedKph != null) {
+        maxItems.push({ label: 'MAX SPEED', value: `${activity.maxSpeedKph.toFixed(1)} km/h` })
+      }
+      if (activity.maxHeartRate != null) {
+        maxItems.push({ label: 'MAX HR', value: `${activity.maxHeartRate} bpm` })
+      }
+      if (activity.normalisedPowerWatts != null) {
+        maxItems.push({ label: 'NP', value: `${activity.normalisedPowerWatts}W` })
+      }
+
+      if (maxItems.length > 0) {
+        const mColW = 390 / maxItems.length
+        maxItems.forEach((item, i) => {
+          const cx = i * mColW
+          if (i > 0) {
+            ctx.strokeStyle = BORDER; ctx.lineWidth = 1
+            ctx.beginPath(); ctx.moveTo(r(cx), ry(MAX_Y + 8)); ctx.lineTo(r(cx), ry(MAX_Y + MAX_H - 8)); ctx.stroke()
+          }
+          ctx.fillStyle = MUTED
+          ctx.font = `400 ${r(9)}px -apple-system, sans-serif`
+          ctx.textAlign = 'left'
+          ctx.fillText(item.label, r(cx + PAD), ry(MAX_Y + 22))
+          ctx.fillStyle = WHITE
+          ctx.font = `700 ${r(20)}px -apple-system, sans-serif`
+          ctx.fillText(item.value, r(cx + PAD), ry(MAX_Y + 46))
+        })
+      }
+    }
+
     ctx.globalAlpha = 1
   }
 
-  // Footer
-  const footAlpha = holdT > 0 ? easeInOut(holdT) : (raceT > 0.85 ? (raceT - 0.85) / 0.15 : 0)
+  // ─── COMPLETE flash ───────────────────────────────────────────────────────
+  if (completeT > 0) {
+    const flashAlpha = completeT < 0.3
+      ? completeT / 0.3
+      : completeT > 0.7 ? 1 - (completeT - 0.7) / 0.3 : 1
+
+    // Green overlay flash
+    ctx.globalAlpha = flashAlpha * 0.15
+    ctx.fillStyle = GREEN
+    ctx.fillRect(0, safeTop, W, r(700))
+    ctx.globalAlpha = 1
+
+    // COMPLETE label
+    ctx.globalAlpha = flashAlpha
+    ctx.fillStyle = GREEN
+    ctx.font = `900 ${r(52)}px -apple-system, sans-serif`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('COMPLETE', r(195), ry(ELEV_Y + ELEV_H / 2))
+    ctx.textBaseline = 'alphabetic'
+
+    // Final stats summary below COMPLETE
+    ctx.fillStyle = WHITE
+    ctx.font = `700 ${r(18)}px -apple-system, sans-serif`
+    ctx.textAlign = 'center'
+    const summaryY = ELEV_Y + ELEV_H / 2 + 50
+    ctx.fillText(
+      `${formatDistance(activity.distanceMetres)}  ·  ${Math.round(activity.totalElevationGain)}m  ·  ${formatTime(activity.movingTimeSeconds)}`,
+      r(195), ry(summaryY)
+    )
+    ctx.globalAlpha = 1
+  }
+
+  // ─── Footer ───────────────────────────────────────────────────────────────
+  const footAlpha = holdT > 0 ? easeInOut(holdT) : (raceT > 0.9 ? (raceT - 0.9) / 0.1 : 0)
   if (footAlpha > 0) {
     ctx.globalAlpha = footAlpha
     ctx.strokeStyle = BORDER; ctx.lineWidth = 1
     ctx.beginPath(); ctx.moveTo(0, ry(FOOTER_Y)); ctx.lineTo(W, ry(FOOTER_Y)); ctx.stroke()
-    ctx.fillStyle = '#555555'
+    ctx.fillStyle = '#888888'
     ctx.font = `700 ${r(11)}px -apple-system, sans-serif`
     ctx.textAlign = 'left'
     ctx.fillText('SEGMENTIQ', r(PAD), ry(FOOTER_Y + 12))
-    ctx.fillStyle = '#444444'
+    ctx.fillStyle = '#666666'
     ctx.font = `400 ${r(10)}px -apple-system, sans-serif`
     ctx.textAlign = 'right'
     ctx.fillText('segmentiq.vercel.app', r(390 - PAD), ry(FOOTER_Y + 12))
@@ -468,11 +595,9 @@ function ActivityReplay({ activity }: { activity: NormalisedActivity }) {
     const elevRange = elevRangeRef.current
 
     if (exportMode) {
-      canvas.width = 1080
-      canvas.height = 1920
+      canvas.width = 1080; canvas.height = 1920
     } else {
-      canvas.width = 390
-      canvas.height = 700
+      canvas.width = 390; canvas.height = 700
     }
 
     const W = canvas.width
@@ -487,30 +612,22 @@ function ActivityReplay({ activity }: { activity: NormalisedActivity }) {
       const topGrad = ctx.createLinearGradient(0, 0, 0, 250)
       topGrad.addColorStop(0, 'rgba(0,0,0,0)')
       topGrad.addColorStop(1, '#0a0a0a')
-      ctx.fillStyle = topGrad
-      ctx.fillRect(0, 0, W, 250)
+      ctx.fillStyle = topGrad; ctx.fillRect(0, 0, W, 250)
 
       const botGrad = ctx.createLinearGradient(0, H - 250, 0, H)
       botGrad.addColorStop(0, '#0a0a0a')
       botGrad.addColorStop(1, 'rgba(0,0,0,0)')
-      ctx.fillStyle = botGrad
-      ctx.fillRect(0, H - 250, W, 250)
+      ctx.fillStyle = botGrad; ctx.fillRect(0, H - 250, W, 250)
     }
 
     drawActivityCard(ctx, t, act, minElev, elevRange, sc, W, H, safeTop)
   }, [])
 
-  const animate = useCallback((
-    duration: number,
-    startProgress: number,
-    exportMode = false,
-    onComplete?: () => void
-  ) => {
+  const animate = useCallback((duration: number, startProgress: number, exportMode = false, onComplete?: () => void) => {
     const startTime = performance.now()
 
     function frame(now: number) {
-      const elapsed = now - startTime
-      const t = Math.min(startProgress + elapsed / duration, 1)
+      const t = Math.min(startProgress + (now - startTime) / duration, 1)
       progressRef.current = t
       if (!exportMode) setProgress(t)
       drawFrame(t, exportMode)
@@ -522,7 +639,6 @@ function ActivityReplay({ activity }: { activity: NormalisedActivity }) {
         onComplete?.()
       }
     }
-
     animFrameRef.current = requestAnimationFrame(frame)
   }, [drawFrame])
 
@@ -534,25 +650,16 @@ function ActivityReplay({ activity }: { activity: NormalisedActivity }) {
     animate(PREVIEW_DURATION * (1 - currentT), currentT, false)
   }
 
-  function pause() {
-    cancelAnimationFrame(animFrameRef.current)
-    setPlaying(false)
-  }
+  function pause() { cancelAnimationFrame(animFrameRef.current); setPlaying(false) }
 
   function seek(t: number) {
     cancelAnimationFrame(animFrameRef.current)
-    setPlaying(false)
-    progressRef.current = t
-    setProgress(t)
-    drawFrame(t, false)
+    setPlaying(false); progressRef.current = t; setProgress(t); drawFrame(t, false)
   }
 
   function restart() {
     cancelAnimationFrame(animFrameRef.current)
-    progressRef.current = 0
-    setProgress(0)
-    drawFrame(0, false)
-    setPlaying(false)
+    progressRef.current = 0; setProgress(0); drawFrame(0, false); setPlaying(false)
   }
 
   useEffect(() => { drawFrame(0, false) }, [drawFrame])
@@ -562,20 +669,14 @@ function ActivityReplay({ activity }: { activity: NormalisedActivity }) {
     const canvas = canvasRef.current
     if (!canvas) return
     if (!window.MediaRecorder || !MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
-      setExportError('Video export requires Chrome or Firefox.')
-      return
+      setExportError('Video export requires Chrome or Firefox.'); return
     }
-    setExporting(true)
-    setExportError(null)
+    setExporting(true); setExportError(null)
     cancelAnimationFrame(animFrameRef.current)
-    progressRef.current = 0
-    drawFrame(0, true)
+    progressRef.current = 0; drawFrame(0, true)
 
     const stream = canvas.captureStream(30)
-    const recorder = new MediaRecorder(stream, {
-      mimeType: 'video/webm;codecs=vp8',
-      videoBitsPerSecond: 12000000,
-    })
+    const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8', videoBitsPerSecond: 12000000 })
     const chunks: Blob[] = []
     recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
     recorder.onstop = () => {
@@ -586,8 +687,7 @@ function ActivityReplay({ activity }: { activity: NormalisedActivity }) {
       a.download = `segmentiq-${activity.name.replace(/\s+/g, '-').toLowerCase()}.webm`
       a.click()
       URL.revokeObjectURL(url)
-      setExporting(false)
-      drawFrame(progressRef.current, false)
+      setExporting(false); drawFrame(progressRef.current, false)
     }
     recorder.start()
     animate(EXPORT_DURATION, 0, true, () => { recorder.stop() })
@@ -602,43 +702,28 @@ function ActivityReplay({ activity }: { activity: NormalisedActivity }) {
         <div className="text-xs text-text-muted">1080×1920 Instagram Story</div>
       </div>
       <canvas
-        ref={canvasRef}
-        width={390}
-        height={700}
+        ref={canvasRef} width={390} height={700}
         style={{ borderRadius: '8px', maxWidth: '100%', display: 'block', margin: '0 auto' }}
       />
       <div className="mt-3 flex items-center gap-3">
-        <button
-          onClick={playing ? pause : play}
-          className="w-8 h-8 rounded-full bg-strava flex items-center justify-center text-white text-xs flex-shrink-0"
-        >
+        <button onClick={playing ? pause : play}
+          className="w-8 h-8 rounded-full bg-strava flex items-center justify-center text-white text-xs flex-shrink-0">
           {playing ? '⏸' : '▶'}
         </button>
-        <input
-          type="range" min={0} max={100} value={progressPct}
+        <input type="range" min={0} max={100} value={progressPct}
           onChange={e => seek(parseInt(e.target.value) / 100)}
-          className="flex-1 accent-strava"
-        />
-        <span className="text-text-muted text-xs w-8 text-right">
-          {Math.round(progress * 15)}s
-        </span>
+          className="flex-1 accent-strava" />
+        <span className="text-text-muted text-xs w-8 text-right">{Math.round(progress * 15)}s</span>
       </div>
       <div className="mt-3 flex items-center gap-3">
-        <button
-          onClick={exporting ? undefined : exportVideo}
-          disabled={exporting}
+        <button onClick={exporting ? undefined : exportVideo} disabled={exporting}
           className={`flex-1 text-sm font-medium py-2.5 rounded-xl transition-colors ${
-            exporting
-              ? 'bg-surface border border-border text-text-muted cursor-not-allowed'
-              : 'bg-strava hover:bg-strava-dark text-white'
-          }`}
-        >
+            exporting ? 'bg-surface border border-border text-text-muted cursor-not-allowed' : 'bg-strava hover:bg-strava-dark text-white'
+          }`}>
           {exporting ? 'Recording story…' : '⬇ Export Instagram Story (1080×1920)'}
         </button>
-        <button
-          onClick={restart}
-          className="w-10 h-10 rounded-xl border border-border text-text-muted hover:text-white transition-colors text-sm"
-        >
+        <button onClick={restart}
+          className="w-10 h-10 rounded-xl border border-border text-text-muted hover:text-white transition-colors text-sm">
           ↺
         </button>
       </div>
@@ -666,9 +751,7 @@ function ActivityContent() {
         const res = await fetch(`/api/activities/${activityId}`, {
           headers: { 'x-session': session },
         })
-        if (res.status === 401) {
-          localStorage.removeItem('session'); router.push('/'); return
-        }
+        if (res.status === 401) { localStorage.removeItem('session'); router.push('/'); return }
         if (!res.ok) throw new Error('Failed to fetch activity')
         const json = await res.json()
         setActivity(json.data)
@@ -681,37 +764,29 @@ function ActivityContent() {
     load()
   }, [activityId])
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-text-muted text-sm">Loading activity...</div>
-      </div>
-    )
-  }
+  if (loading) return (
+    <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="text-text-muted text-sm">Loading activity...</div>
+    </div>
+  )
 
-  if (error || !activity) {
-    return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center px-4 gap-4">
-        <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-4 text-red-400 text-sm">
-          {error ?? 'Something went wrong'}
-        </div>
-        <button
-          onClick={() => router.back()}
-          className="text-text-secondary text-sm hover:text-white transition-colors"
-        >
-          ← Go back
-        </button>
+  if (error || !activity) return (
+    <div className="min-h-screen bg-background flex flex-col items-center justify-center px-4 gap-4">
+      <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-4 text-red-400 text-sm">
+        {error ?? 'Something went wrong'}
       </div>
-    )
-  }
+      <button onClick={() => router.back()}
+        className="text-text-secondary text-sm hover:text-white transition-colors">
+        ← Go back
+      </button>
+    </div>
+  )
 
   return (
     <div className="min-h-screen bg-background">
       <div className="border-b border-border px-4 py-4 flex items-center gap-3">
-        <button
-          onClick={() => router.back()}
-          className="text-text-secondary hover:text-white transition-colors text-lg"
-        >←</button>
+        <button onClick={() => router.back()}
+          className="text-text-secondary hover:text-white transition-colors text-lg">←</button>
         <div>
           <h1 className="font-semibold text-sm">{activity.name}</h1>
           <p className="text-text-muted text-xs">{formatDate(activity.startDate)}</p>
@@ -719,40 +794,28 @@ function ActivityContent() {
       </div>
 
       <div className="max-w-2xl mx-auto px-4 py-6">
-
         <div className="grid grid-cols-2 gap-3 mb-6">
           <div className="bg-surface border border-border rounded-2xl p-4">
             <div className="text-text-muted text-xs mb-1">Moving time</div>
-            <div className="text-white font-semibold text-lg">
-              {formatTime(activity.movingTimeSeconds)}
-            </div>
-            <div className="text-text-muted text-xs mt-1">
-              {formatDistance(activity.distanceMetres)}
-            </div>
+            <div className="text-white font-semibold text-lg">{formatTime(activity.movingTimeSeconds)}</div>
+            <div className="text-text-muted text-xs mt-1">{formatDistance(activity.distanceMetres)}</div>
           </div>
           <div className="bg-surface border border-border rounded-2xl p-4">
             <div className="text-text-muted text-xs mb-1">Elevation gain</div>
-            <div className="text-white font-semibold text-lg">
-              {Math.round(activity.totalElevationGain)}m
-            </div>
+            <div className="text-white font-semibold text-lg">{Math.round(activity.totalElevationGain)}m</div>
             <div className="text-text-muted text-xs mt-1">
-              {activity.averageSpeedKph != null
-                ? `${activity.averageSpeedKph.toFixed(1)} km/h avg` : ''}
+              {activity.averageSpeedKph != null ? `${activity.averageSpeedKph.toFixed(1)} km/h avg` : ''}
             </div>
           </div>
         </div>
 
-        {(activity.averageHeartRate != null ||
-          activity.averagePowerWatts != null ||
-          activity.averageCadence != null) && (
+        {(activity.averageHeartRate != null || activity.averagePowerWatts != null || activity.averageCadence != null) && (
           <div className="bg-surface border border-border rounded-2xl px-4 py-3 mb-6">
             <div className="grid grid-cols-3 gap-4">
               {activity.averageHeartRate != null && (
                 <div className="text-center">
                   <div className="text-text-muted text-xs mb-1">Avg HR</div>
-                  <div className="text-white text-sm font-medium">
-                    {Math.round(activity.averageHeartRate)} bpm
-                  </div>
+                  <div className="text-white text-sm font-medium">{Math.round(activity.averageHeartRate)} bpm</div>
                   {activity.maxHeartRate != null && (
                     <div className="text-text-muted text-xs">max {activity.maxHeartRate}</div>
                   )}
@@ -765,18 +828,14 @@ function ActivityContent() {
                     {Math.round(activity.averagePowerWatts)}W{!activity.hasPower ? ' est.' : ''}
                   </div>
                   {activity.normalisedPowerWatts != null && (
-                    <div className="text-text-muted text-xs">
-                      NP {activity.normalisedPowerWatts}W
-                    </div>
+                    <div className="text-text-muted text-xs">NP {activity.normalisedPowerWatts}W</div>
                   )}
                 </div>
               )}
               {activity.averageCadence != null && (
                 <div className="text-center">
                   <div className="text-text-muted text-xs mb-1">Avg cadence</div>
-                  <div className="text-white text-sm font-medium">
-                    {Math.round(activity.averageCadence)} rpm
-                  </div>
+                  <div className="text-white text-sm font-medium">{Math.round(activity.averageCadence)} rpm</div>
                 </div>
               )}
             </div>
@@ -784,7 +843,6 @@ function ActivityContent() {
         )}
 
         <ActivityReplay activity={activity} />
-
       </div>
     </div>
   )
