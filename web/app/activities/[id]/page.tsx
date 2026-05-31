@@ -630,14 +630,30 @@ function ActivityReplay({ activity }: { activity: NormalisedActivity }) {
     progressRef.current = 0
     drawFrame(0, true)
 
-    const stream = canvas.captureStream(30)
-    const recorder = new MediaRecorder(stream, {
+    // Create a silent audio track and merge with canvas stream.
+    // Instagram requires an audio stream to enable the music editor
+    // when the video is imported into Stories.
+    const audioCtx = new AudioContext()
+    const silentDest = audioCtx.createMediaStreamDestination()
+    const oscillator = audioCtx.createOscillator()
+    const gainNode = audioCtx.createGain()
+    gainNode.gain.value = 0  // zero gain = silent but valid audio stream
+    oscillator.connect(gainNode)
+    gainNode.connect(silentDest)
+    oscillator.start()
+
+    const videoStream = canvas.captureStream(30)
+    videoStream.addTrack(silentDest.stream.getAudioTracks()[0])
+
+    const recorder = new MediaRecorder(videoStream, {
       mimeType: 'video/webm;codecs=vp8',
       videoBitsPerSecond: 12000000,
     })
     const chunks: Blob[] = []
     recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
     recorder.onstop = () => {
+      oscillator.stop()
+      audioCtx.close()
       const blob = new Blob(chunks, { type: 'video/webm' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
