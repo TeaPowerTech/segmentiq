@@ -66,6 +66,10 @@ function easeInOut(t: number): number {
   return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t
 }
 
+function easeOut(t: number): number {
+  return 1 - Math.pow(1 - t, 3)
+}
+
 function countUpNum(target: number, t: number): number {
   return Math.floor(target * Math.min(easeInOut(t), 1))
 }
@@ -123,79 +127,63 @@ function drawActivityCard(
   function r(x: number) { return Math.round(x * s) }
   function ry(y: number) { return Math.round(safeTop + y * s) }
 
-  function roundRect(x: number, y: number, w: number, h: number, radius: number) {
-    const rw = r(w); if (rw <= 0) return
-    const rx2 = r(x), ry2 = ry(y), rh = r(h), rr = Math.min(r(radius), rw / 2, rh / 2)
-    ctx.beginPath()
-    ctx.moveTo(rx2 + rr, ry2)
-    ctx.lineTo(rx2 + rw - rr, ry2)
-    ctx.quadraticCurveTo(rx2 + rw, ry2, rx2 + rw, ry2 + rr)
-    ctx.lineTo(rx2 + rw, ry2 + rh - rr)
-    ctx.quadraticCurveTo(rx2 + rw, ry2 + rh, rx2 + rw - rr, ry2 + rh)
-    ctx.lineTo(rx2 + rr, ry2 + rh)
-    ctx.quadraticCurveTo(rx2, ry2 + rh, rx2, ry2 + rh - rr)
-    ctx.lineTo(rx2, ry2 + rr)
-    ctx.quadraticCurveTo(rx2, ry2, rx2 + rr, ry2)
-    ctx.closePath()
-  }
-
   const PAD = 16
 
-  // ── Fixed layout (unscaled 390px coords) ──────────────────────────────────
+  // Layout
   const HEADER_H = 68
   const STATS_Y = 68
   const STATS_H = 110
   const ELEV_Y = 178
   const ELEV_H = 140
-  const GRADE_Y = 326
-  const GRADE_H = 18
-  const LEGEND_Y = 352
-  const LIVE_Y = 374
+  const LEGEND_Y = 330
+  const LIVE_Y = 350
   const LIVE_H = 110
-  const MAX_Y = 494
+  const MAX_Y = 470
   const MAX_H = 88
   const FOOTER_Y = 686
 
-  // ── Phases (slower — designed for 30s export, 15s preview) ────────────────
-  // 0–10%:  countdown over elevation (1.5s preview / 3s export)
-  // 10–25%: header + stats count up (2.25s / 4.5s)
-  // 25–90%: dot races + live counters (9.75s / 19.5s)
-  // 90–96%: COMPLETE screen (0.9s / 1.8s)
-  // 96–100%: hold + footer
-
-  const PHASE_COUNTDOWN_END = 0.10
-  const PHASE_STATS_END = 0.25
-  const PHASE_RACE_END = 0.90
-  const PHASE_COMPLETE_END = 0.96
+  // Phases
+  // 0–15%:  countdown (4.5s export)
+  // 15–35%: stats reveal — time first, then secondaries stagger in (6s export)
+  // 35–100%: race (19.5s export)
+  const PHASE_COUNTDOWN_END = 0.15
+  const PHASE_STATS_END = 0.35
 
   const countdownT = Math.min(t / PHASE_COUNTDOWN_END, 1)
   const headerAlpha = Math.min(t / PHASE_COUNTDOWN_END, 1)
   const statsT = t < PHASE_COUNTDOWN_END ? 0
     : Math.min((t - PHASE_COUNTDOWN_END) / (PHASE_STATS_END - PHASE_COUNTDOWN_END), 1)
   const raceT = t < PHASE_STATS_END ? 0
-    : Math.min((t - PHASE_STATS_END) / (PHASE_RACE_END - PHASE_STATS_END), 1)
-  const completeT = t < PHASE_RACE_END ? 0
-    : Math.min((t - PHASE_RACE_END) / (PHASE_COMPLETE_END - PHASE_RACE_END), 1)
-  const holdT = t < PHASE_COMPLETE_END ? 0
-    : Math.min((t - PHASE_COMPLETE_END) / (1 - PHASE_COMPLETE_END), 1)
+    : Math.min((t - PHASE_STATS_END) / (1 - PHASE_STATS_END), 1)
+  const footAlpha = raceT > 0.8 ? easeInOut((raceT - 0.8) / 0.2) : 0
 
-  // ── Orange accent ─────────────────────────────────────────────────────────
+  // Orange accent
   ctx.fillStyle = ORANGE
   ctx.fillRect(0, safeTop, r(4), r(700))
 
-  // ── Elevation profile — visible from frame 0 ──────────────────────────────
+  // Elevation profile — coloured line by gradient, no blocks
   const elevPad = PAD
   const elevW = 390 - elevPad * 2
 
-  // KEY FIX: use distancePct for x-position so dot and line always agree
   const elevPts = activity.points.map((p) => ({
     x: r(elevPad + p.distancePct * elevW),
     y: ry(ELEV_Y + ELEV_H - ((p.elevationMetres - minElev) / elevRange) * ELEV_H),
+    grade: 0, // filled below
   }))
 
+  // Calculate grade per point
+  for (let i = 0; i < activity.points.length; i++) {
+    const prev = activity.points[Math.max(0, i - 2)]
+    const next = activity.points[Math.min(activity.points.length - 1, i + 2)]
+    const distDiff = (next.distancePct - prev.distancePct) * activity.distanceMetres
+    const elevDiff = next.elevationMetres - prev.elevationMetres
+    elevPts[i].grade = distDiff > 0 ? (elevDiff / distDiff) * 100 : 0
+  }
+
+  // Fill under the line (neutral dark orange)
   const elevGrad = ctx.createLinearGradient(0, ry(ELEV_Y), 0, ry(ELEV_Y + ELEV_H))
-  elevGrad.addColorStop(0, 'rgba(252,76,2,0.3)')
-  elevGrad.addColorStop(1, 'rgba(252,76,2,0.03)')
+  elevGrad.addColorStop(0, 'rgba(252,76,2,0.15)')
+  elevGrad.addColorStop(1, 'rgba(252,76,2,0.02)')
   ctx.beginPath()
   ctx.moveTo(elevPts[0].x, ry(ELEV_Y + ELEV_H))
   elevPts.forEach(p => ctx.lineTo(p.x, p.y))
@@ -203,46 +191,36 @@ function drawActivityCard(
   ctx.closePath()
   ctx.fillStyle = elevGrad; ctx.fill()
 
-  ctx.beginPath()
-  elevPts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y))
-  ctx.strokeStyle = ORANGE; ctx.lineWidth = r(1.5); ctx.lineJoin = 'round'; ctx.stroke()
-
-  // ── Grade profile ─────────────────────────────────────────────────────────
-  ctx.fillStyle = DIM
-  ctx.font = `${r(9)}px -apple-system, sans-serif`
-  ctx.textAlign = 'left'
-  ctx.fillText('GRADIENT', r(PAD), ry(GRADE_Y - 4))
-
-  for (let i = 0; i < 40; i++) {
-    const idx0 = Math.floor((i / 40) * (activity.points.length - 1))
-    const idx1 = Math.floor(((i + 1) / 40) * (activity.points.length - 1))
-    const p0 = activity.points[idx0]
-    const p1 = activity.points[idx1]
-    const distDiff = (p1.distancePct - p0.distancePct) * activity.distanceMetres
-    const elevDiff = p1.elevationMetres - p0.elevationMetres
-    const grade = distDiff > 0 ? (elevDiff / distDiff) * 100 : 0
-    ctx.fillStyle = gradeColour(grade)
-    roundRect(PAD + (i / 40) * (390 - PAD * 2), GRADE_Y, (390 - PAD * 2) / 40 + 0.5, GRADE_H, 2)
-    ctx.fill()
+  // Draw elevation line as coloured segments
+  ctx.lineWidth = r(2.5); ctx.lineJoin = 'round'; ctx.lineCap = 'round'
+  for (let i = 1; i < elevPts.length; i++) {
+    const grade = (elevPts[i - 1].grade + elevPts[i].grade) / 2
+    ctx.beginPath()
+    ctx.moveTo(elevPts[i - 1].x, elevPts[i - 1].y)
+    ctx.lineTo(elevPts[i].x, elevPts[i].y)
+    ctx.strokeStyle = gradeColour(grade)
+    ctx.stroke()
   }
 
+  // Gradient legend — compact, sits just below profile
   const legendItems = [
     { label: '<3%', colour: GREEN },
-    { label: '3-6%', colour: GOLD },
-    { label: '6-10%', colour: ORANGE },
+    { label: '3–6%', colour: GOLD },
+    { label: '6–10%', colour: ORANGE },
     { label: '>10%', colour: RED },
   ]
   let lx = PAD
   legendItems.forEach(item => {
     ctx.fillStyle = item.colour
     ctx.fillRect(r(lx), ry(LEGEND_Y), r(8), r(6))
+    ctx.fillStyle = MUTED
     ctx.font = `${r(9)}px -apple-system, sans-serif`
     ctx.textAlign = 'left'
-    ctx.fillText(item.label, r(lx + 10), ry(LEGEND_Y + 7))
-    lx += 52
+    ctx.fillText(item.label, r(lx + 11), ry(LEGEND_Y + 7))
+    lx += 50
   })
 
-  // ── Header ────────────────────────────────────────────────────────────────
+  // Header
   ctx.globalAlpha = headerAlpha
   ctx.fillStyle = SURFACE
   ctx.fillRect(0, safeTop, W, r(HEADER_H))
@@ -265,7 +243,7 @@ function drawActivityCard(
   ctx.fillText('SEGMENTIQ', r(390 - PAD), ry(36))
   ctx.globalAlpha = 1
 
-  // ── Countdown overlaid on elevation ───────────────────────────────────────
+  // Countdown over elevation
   if (countdownT < 1) {
     const cd = countdownT * 4
     let label = ''
@@ -275,11 +253,9 @@ function drawActivityCard(
     else if (cd < 3) { label = '1'; phase = cd - 2 }
     else { label = 'GO!'; phase = cd - 3 }
 
-    // Hold white for 60%, fade in last 40%
     const alpha = label === 'GO!'
       ? Math.min(phase * 4, 1) * (1 - Math.max((phase - 0.5) * 2, 0))
       : phase < 0.6 ? Math.min(phase * 5, 1) : 1 - ((phase - 0.6) / 0.4)
-
     const scale = 1 + (1 - phase) * 0.2
 
     ctx.globalAlpha = alpha
@@ -296,11 +272,20 @@ function drawActivityCard(
     ctx.globalAlpha = 1
   }
 
-  // ── Stats count up ────────────────────────────────────────────────────────
+  // Stats — staggered reveal
+  // statsT 0–0.35: moving time counts up alone
+  // statsT 0.35–0.55: distance fades in
+  // statsT 0.55–0.75: elevation fades in
+  // statsT 0.75–1.0:  avg speed fades in
   if (statsT > 0) {
-    ctx.globalAlpha = Math.min(statsT * 3, 1)
+    const timeT = Math.min(statsT / 0.35, 1)
+    const distAlpha = statsT > 0.35 ? easeOut((statsT - 0.35) / 0.2) : 0
+    const elevAlpha = statsT > 0.55 ? easeOut((statsT - 0.55) / 0.2) : 0
+    const speedAlpha = statsT > 0.75 ? easeOut((statsT - 0.75) / 0.25) : 0
 
-    const countedTime = countUpNum(activity.movingTimeSeconds, statsT)
+    // Moving time — large, counts up
+    ctx.globalAlpha = Math.min(timeT * 3, 1)
+    const countedTime = countUpNum(activity.movingTimeSeconds, timeT)
     ctx.fillStyle = ORANGE
     ctx.font = `700 ${r(44)}px -apple-system, sans-serif`
     ctx.textAlign = 'center'
@@ -309,33 +294,55 @@ function drawActivityCard(
     ctx.font = `400 ${r(10)}px -apple-system, sans-serif`
     ctx.fillText('MOVING TIME', r(195), ry(STATS_Y + 62))
 
+    // Three secondary stats — staggered
     const subY = STATS_Y + 74
     const thirdW = 390 / 3
-    const countedDist = countUpNum(activity.distanceMetres, statsT)
-    const countedElev = countUpNum(activity.totalElevationGain, statsT)
 
-    ctx.strokeStyle = BORDER; ctx.lineWidth = 1
-    ctx.beginPath(); ctx.moveTo(r(thirdW), ry(subY)); ctx.lineTo(r(thirdW), ry(subY + 40)); ctx.stroke()
-    ctx.beginPath(); ctx.moveTo(r(thirdW * 2), ry(subY)); ctx.lineTo(r(thirdW * 2), ry(subY + 40)); ctx.stroke()
+    // Dividers — appear with first secondary
+    if (distAlpha > 0) {
+      ctx.globalAlpha = distAlpha
+      ctx.strokeStyle = BORDER; ctx.lineWidth = 1
+      ctx.beginPath(); ctx.moveTo(r(thirdW), ry(subY)); ctx.lineTo(r(thirdW), ry(subY + 40)); ctx.stroke()
+      ctx.beginPath(); ctx.moveTo(r(thirdW * 2), ry(subY)); ctx.lineTo(r(thirdW * 2), ry(subY + 40)); ctx.stroke()
+    }
 
+    // Distance
+    ctx.globalAlpha = distAlpha
+    const countedDist = countUpNum(activity.distanceMetres, distAlpha)
     ctx.fillStyle = WHITE
     ctx.font = `700 ${r(20)}px -apple-system, sans-serif`
     ctx.textAlign = 'center'
     ctx.fillText(formatDistance(countedDist), r(thirdW * 0.5), ry(subY + 22))
-    ctx.fillText(`${Math.round(countedElev)}m`, r(thirdW * 1.5), ry(subY + 22))
-    ctx.fillText(`${(activity.averageSpeedKph ?? 0).toFixed(1)}`, r(thirdW * 2.5), ry(subY + 22))
-
     ctx.fillStyle = MUTED
     ctx.font = `400 ${r(9)}px -apple-system, sans-serif`
     ctx.fillText('DISTANCE', r(thirdW * 0.5), ry(subY + 36))
+
+    // Elevation
+    ctx.globalAlpha = elevAlpha
+    const countedElev = countUpNum(activity.totalElevationGain, elevAlpha)
+    ctx.fillStyle = WHITE
+    ctx.font = `700 ${r(20)}px -apple-system, sans-serif`
+    ctx.textAlign = 'center'
+    ctx.fillText(`${Math.round(countedElev)}m`, r(thirdW * 1.5), ry(subY + 22))
+    ctx.fillStyle = MUTED
+    ctx.font = `400 ${r(9)}px -apple-system, sans-serif`
     ctx.fillText('ELEVATION', r(thirdW * 1.5), ry(subY + 36))
+
+    // Avg speed
+    ctx.globalAlpha = speedAlpha
+    ctx.fillStyle = WHITE
+    ctx.font = `700 ${r(20)}px -apple-system, sans-serif`
+    ctx.textAlign = 'center'
+    ctx.fillText(`${(activity.averageSpeedKph ?? 0).toFixed(1)}`, r(thirdW * 2.5), ry(subY + 22))
+    ctx.fillStyle = MUTED
+    ctx.font = `400 ${r(9)}px -apple-system, sans-serif`
     ctx.fillText('AVG SPEED', r(thirdW * 2.5), ry(subY + 36))
+
     ctx.globalAlpha = 1
   }
 
-  // ── Racing dot + trail ────────────────────────────────────────────────────
-  if (raceT > 0 && completeT === 0) {
-    // Trail — also uses distancePct for x so it matches the line
+  // Racing dot + trail
+  if (raceT > 0) {
     const trailEnd = Math.floor(raceT * (activity.points.length - 1))
     if (trailEnd > 0) {
       ctx.beginPath()
@@ -345,11 +352,10 @@ function drawActivityCard(
         const y = ry(ELEV_Y + ELEV_H - ((p.elevationMetres - minElev) / elevRange) * ELEV_H)
         i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)
       }
-      ctx.strokeStyle = 'rgba(255,255,255,0.7)'
-      ctx.lineWidth = r(2.5); ctx.lineJoin = 'round'; ctx.stroke()
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)'
+      ctx.lineWidth = r(2); ctx.lineJoin = 'round'; ctx.stroke()
     }
 
-    // Dot — x uses distancePct, y uses elevationMetres — same formula as elevPts
     const pt = getPointAt(activity.points, raceT)
     const dotX = r(elevPad + pt.distancePct * elevW)
     const dotY = ry(ELEV_Y + ELEV_H - ((pt.elevationMetres - minElev) / elevRange) * ELEV_H)
@@ -364,8 +370,8 @@ function drawActivityCard(
     ctx.strokeStyle = ORANGE; ctx.lineWidth = r(2); ctx.stroke()
   }
 
-  // ── Live counters ─────────────────────────────────────────────────────────
-  if (raceT > 0 && completeT === 0) {
+  // Live counters
+  if (raceT > 0) {
     ctx.globalAlpha = Math.min(raceT * 4, 1)
 
     const pt = getPointAt(activity.points, raceT)
@@ -426,10 +432,9 @@ function drawActivityCard(
       ctx.fillText(item.value, r(item.x), ry(counterY + 32))
     })
 
-    // Max stats row
+    // Max stats — fade in after 25% of race
     if (raceT > 0.25) {
-      const maxAlpha = Math.min((raceT - 0.25) / 0.2, 1)
-      ctx.globalAlpha = maxAlpha
+      ctx.globalAlpha = easeOut(Math.min((raceT - 0.25) / 0.2, 1))
       ctx.strokeStyle = BORDER; ctx.lineWidth = 1
       ctx.beginPath(); ctx.moveTo(0, ry(MAX_Y)); ctx.lineTo(W, ry(MAX_Y)); ctx.stroke()
 
@@ -450,7 +455,10 @@ function drawActivityCard(
           const cx = i * mColW
           if (i > 0) {
             ctx.strokeStyle = BORDER; ctx.lineWidth = 1
-            ctx.beginPath(); ctx.moveTo(r(cx), ry(MAX_Y + 8)); ctx.lineTo(r(cx), ry(MAX_Y + MAX_H - 8)); ctx.stroke()
+            ctx.beginPath()
+            ctx.moveTo(r(cx), ry(MAX_Y + 8))
+            ctx.lineTo(r(cx), ry(MAX_Y + MAX_H - 8))
+            ctx.stroke()
           }
           ctx.fillStyle = MUTED
           ctx.font = `400 ${r(9)}px -apple-system, sans-serif`
@@ -466,73 +474,7 @@ function drawActivityCard(
     ctx.globalAlpha = 1
   }
 
-  // ── COMPLETE screen — clean dark card, no green flash ─────────────────────
-  if (completeT > 0) {
-    const alpha = completeT < 0.2 ? completeT / 0.2 : 1
-    ctx.globalAlpha = alpha
-
-    // Darken background behind complete card
-    ctx.fillStyle = 'rgba(10,10,10,0.85)'
-    ctx.fillRect(0, safeTop, W, r(700))
-
-    // Complete label
-    ctx.fillStyle = GREEN
-    ctx.font = `700 ${r(13)}px -apple-system, sans-serif`
-    ctx.textAlign = 'center'
-    ctx.fillText('RIDE COMPLETE', r(195), ry(260))
-
-    // Three big stats
-    const statsItems = [
-      { label: 'TIME', value: formatTime(activity.movingTimeSeconds) },
-      { label: 'DISTANCE', value: formatDistance(activity.distanceMetres) },
-      { label: 'ELEVATION', value: `${Math.round(activity.totalElevationGain)}m` },
-    ]
-    const statColW = 390 / 3
-    statsItems.forEach((item, i) => {
-      const cx = i * statColW + statColW / 2
-      ctx.fillStyle = WHITE
-      ctx.font = `700 ${r(26)}px -apple-system, sans-serif`
-      ctx.textAlign = 'center'
-      ctx.fillText(item.value, r(cx), ry(320))
-      ctx.fillStyle = MUTED
-      ctx.font = `400 ${r(9)}px -apple-system, sans-serif`
-      ctx.fillText(item.label, r(cx), ry(336))
-    })
-
-    // Divider
-    ctx.strokeStyle = BORDER; ctx.lineWidth = 1
-    ctx.beginPath(); ctx.moveTo(r(PAD), ry(350)); ctx.lineTo(r(390 - PAD), ry(350)); ctx.stroke()
-
-    // Secondary stats row
-    const secItems: { label: string; value: string }[] = []
-    if (activity.averageSpeedKph != null) {
-      secItems.push({ label: 'AVG SPEED', value: `${activity.averageSpeedKph.toFixed(1)} km/h` })
-    }
-    if (activity.averageHeartRate != null) {
-      secItems.push({ label: 'AVG HR', value: `${Math.round(activity.averageHeartRate)} bpm` })
-    }
-    if (activity.averagePowerWatts != null) {
-      secItems.push({ label: 'AVG POWER', value: `${Math.round(activity.averagePowerWatts)}W${!activity.hasPower ? ' est.' : ''}` })
-    }
-    if (secItems.length > 0) {
-      const secColW = 390 / secItems.length
-      secItems.forEach((item, i) => {
-        const cx = i * secColW + secColW / 2
-        ctx.fillStyle = MUTED
-        ctx.font = `400 ${r(9)}px -apple-system, sans-serif`
-        ctx.textAlign = 'center'
-        ctx.fillText(item.label, r(cx), ry(366))
-        ctx.fillStyle = WHITE
-        ctx.font = `600 ${r(14)}px -apple-system, sans-serif`
-        ctx.fillText(item.value, r(cx), ry(382))
-      })
-    }
-
-    ctx.globalAlpha = 1
-  }
-
-  // ── Footer ────────────────────────────────────────────────────────────────
-  const footAlpha = holdT > 0 ? easeInOut(holdT) : (raceT > 0.92 ? (raceT - 0.92) / 0.08 : 0)
+  // Footer
   if (footAlpha > 0) {
     ctx.globalAlpha = footAlpha
     ctx.strokeStyle = BORDER; ctx.lineWidth = 1
