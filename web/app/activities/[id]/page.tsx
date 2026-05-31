@@ -174,7 +174,17 @@ function drawActivityCard(
   ctx.fillText(activity.type.toUpperCase(), r(PAD + 4), ry(18))
   ctx.fillStyle = WHITE
   ctx.font = `700 ${r(16)}px -apple-system, sans-serif`
-  ctx.fillText(activity.name, r(PAD + 4), ry(36))
+  // Measure SEGMENTIQ width and leave a gap — truncate name with ellipsis if needed
+  const segmentiqWidth = ctx.measureText('SEGMENTIQ').width
+  const nameMaxWidth = W - r(PAD + 4) - segmentiqWidth - r(24)
+  let displayName = activity.name
+  if (ctx.measureText(displayName).width > nameMaxWidth) {
+    while (ctx.measureText(displayName + '…').width > nameMaxWidth && displayName.length > 0) {
+      displayName = displayName.slice(0, -1)
+    }
+    displayName = displayName + '…'
+  }
+  ctx.fillText(displayName, r(PAD + 4), ry(36))
   ctx.fillStyle = MUTED
   ctx.font = `400 ${r(11)}px -apple-system, sans-serif`
   ctx.fillText(formatDate(activity.startDate), r(PAD + 4), ry(54))
