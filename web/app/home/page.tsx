@@ -37,7 +37,6 @@ function HomeContent() {
       </div>
 
       <div className="max-w-2xl mx-auto px-4 py-8">
-
         <div className="mb-8">
           <h2 className="text-white text-lg font-semibold mb-1">What would you like to do?</h2>
           <p className="text-text-muted text-sm">Choose a feature to get started</p>
@@ -45,7 +44,7 @@ function HomeContent() {
 
         <div className="flex flex-col gap-4">
 
-          {/* Segments */}
+          {/* Segment Comparison */}
           <button
             onClick={() => router.push('/dashboard')}
             className="bg-surface border border-border rounded-2xl p-6 text-left hover:border-strava transition-colors group"
@@ -62,14 +61,14 @@ function HomeContent() {
             <p className="text-text-muted text-sm leading-relaxed">
               Compare two efforts on the same segment. Watch them race side by side, see live stats, and export an Instagram Story.
             </p>
-            <div className="flex gap-2 mt-4">
+            <div className="flex gap-2 mt-4 flex-wrap">
               <span className="text-xs px-2 py-1 rounded-lg bg-surface border border-border text-text-muted">Side by side replay</span>
               <span className="text-xs px-2 py-1 rounded-lg bg-surface border border-border text-text-muted">Tug of war stats</span>
               <span className="text-xs px-2 py-1 rounded-lg bg-surface border border-border text-text-muted">Story export</span>
             </div>
           </button>
 
-          {/* Activities */}
+          {/* Activity Summary */}
           <button
             onClick={() => router.push('/activities')}
             className="bg-surface border border-border rounded-2xl p-6 text-left hover:border-strava transition-colors group"
@@ -86,10 +85,34 @@ function HomeContent() {
             <p className="text-text-muted text-sm leading-relaxed">
               Turn any ride into a shareable story card. Animated elevation replay, live stats, and a full 1080×1920 Instagram Story export.
             </p>
-            <div className="flex gap-2 mt-4">
+            <div className="flex gap-2 mt-4 flex-wrap">
               <span className="text-xs px-2 py-1 rounded-lg bg-surface border border-border text-text-muted">Elevation replay</span>
               <span className="text-xs px-2 py-1 rounded-lg bg-surface border border-border text-text-muted">Live metrics</span>
               <span className="text-xs px-2 py-1 rounded-lg bg-surface border border-border text-text-muted">Story export</span>
+            </div>
+          </button>
+
+          {/* Coverage Map */}
+          <button
+            onClick={() => router.push('/coverage')}
+            className="bg-surface border border-border rounded-2xl p-6 text-left hover:border-strava transition-colors group"
+          >
+            <div className="flex items-start justify-between mb-4">
+              <div className="w-12 h-12 rounded-xl bg-strava/10 border border-strava/20 flex items-center justify-center text-2xl">
+                🗺️
+              </div>
+              <svg className="w-5 h-5 text-text-muted group-hover:text-white transition-colors mt-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </div>
+            <h3 className="text-white font-semibold text-base mb-1">Coverage Map</h3>
+            <p className="text-text-muted text-sm leading-relaxed">
+              See every road and trail you've ever ridden on a heatmap of UK and Ireland. Watch your coverage grow over time and export an animated story.
+            </p>
+            <div className="flex gap-2 mt-4 flex-wrap">
+              <span className="text-xs px-2 py-1 rounded-lg bg-surface border border-border text-text-muted">Heatmap tiles</span>
+              <span className="text-xs px-2 py-1 rounded-lg bg-surface border border-border text-text-muted">Date filter</span>
+              <span className="text-xs px-2 py-1 rounded-lg bg-surface border border-border text-text-muted">Animated export</span>
             </div>
           </button>
 
