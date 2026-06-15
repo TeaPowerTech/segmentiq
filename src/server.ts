@@ -66,6 +66,13 @@ async function setupDatabase() {
 
     CREATE INDEX IF NOT EXISTS idx_effort_cache_expires
       ON effort_cache(expires_at);
+
+    CREATE TABLE IF NOT EXISTS coverage_cache (
+      athlete_id    INTEGER PRIMARY KEY,
+      tiles         JSONB NOT NULL,
+      activity_count INTEGER NOT NULL DEFAULT 0,
+      computed_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
   `)
   console.log('[db] tables ready')
 }
@@ -123,6 +130,89 @@ async function toRealId(safeId: string): Promise<string | null> {
   return result.rows[0]?.real_id ?? null
 }
 
+// ─── Tile math ────────────────────────────────────────────────────────────────
+
+const ZOOM = 14
+
+function latLonToTile(lat: number, lon: number): { x: number; y: number } {
+  const n = Math.pow(2, ZOOM)
+  const x = Math.floor((lon + 180) / 360 * n)
+  const latRad = lat * Math.PI / 180
+  const y = Math.floor((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n)
+  return { x, y }
+}
+
+// Virtual activity types to exclude (Zwift etc.)
+const VIRTUAL_TYPES = new Set(['VirtualRide', 'VirtualRun', 'VirtualRow'])
+
+// ─── Coverage compute ─────────────────────────────────────────────────────────
+
+interface TileHit {
+  x: number
+  y: number
+  date: string
+  count: number
+}
+
+async function computeCoverage(athleteId: number): Promise<TileHit[]> {
+  const tileMap = new Map<string, TileHit>()
+  let page = 1
+  let totalActivities = 0
+
+  console.log(`[coverage] computing for athlete ${athleteId}`)
+
+  // Fetch all activities in pages of 50
+  while (true) {
+    const activities = await fetchRecentActivities(athleteId, page, 50)
+    if (!activities || activities.length === 0) break
+
+    const eligible = activities.filter((a: any) => !VIRTUAL_TYPES.has(a.type))
+    totalActivities += eligible.length
+
+    // Process in batches of 10 with delay to respect rate limits
+    for (let i = 0; i < eligible.length; i += 10) {
+      const batch = eligible.slice(i, i + 10)
+
+      await Promise.all(batch.map(async (activity: any) => {
+        try {
+          const streams = await fetchActivityStreams(athleteId, String(activity.id))
+          if (!streams?.latlng?.data) return
+
+          const date = activity.start_date?.split('T')[0] ?? '1970-01-01'
+
+          for (const [lat, lon] of streams.latlng.data) {
+            if (typeof lat !== 'number' || typeof lon !== 'number') continue
+            const { x, y } = latLonToTile(lat, lon)
+            const key = `${x},${y}`
+            const existing = tileMap.get(key)
+            if (existing) {
+              existing.count++
+              if (date < existing.date) existing.date = date
+            } else {
+              tileMap.set(key, { x, y, date, count: 1 })
+            }
+          }
+        } catch {
+          // Skip activities that fail to fetch — don't abort the whole compute
+        }
+      }))
+
+      // Small delay between batches to avoid Strava rate limiting
+      if (i + 10 < eligible.length) {
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      }
+    }
+
+    if (activities.length < 50) break
+    page++
+  }
+
+  console.log(`[coverage] done — ${tileMap.size} tiles from ${totalActivities} activities`)
+  return Array.from(tileMap.values())
+}
+
+// ─── CORS ─────────────────────────────────────────────────────────────────────
+
 app.use((req, res, next) => {
   const origin = req.headers.origin
   const allowed = [
@@ -142,6 +232,8 @@ app.use((req, res, next) => {
 
 app.use('/api', authRouter)
 
+// ─── Session middleware ───────────────────────────────────────────────────────
+
 function requireSession(req: any, res: Response, next: any) {
   const sessionFromHeader = req.headers['x-session'] as string | undefined
   const sessionFromCookie = req.cookies?.session
@@ -159,12 +251,133 @@ function requireSession(req: any, res: Response, next: any) {
   }
 }
 
+// ─── Caches ───────────────────────────────────────────────────────────────────
+
 const cache = new EffortCache(createInMemoryCacheStore())
 const activityCache = new Map<string, { data: any; cachedAt: number }>()
 const ACTIVITY_CACHE_TTL_MS = 1000 * 60 * 30
+
+// Track in-progress coverage computations to avoid duplicate jobs
+const coverageInProgress = new Set<number>()
+
+// ─── Health ───────────────────────────────────────────────────────────────────
+
 app.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', app: 'SegmentIQ API' })
 })
+
+// ─── POST /api/convert ────────────────────────────────────────────────────────
+
+app.post('/api/convert', express.raw({ type: 'video/webm', limit: '200mb' }), async (req: Request, res: Response) => {
+  const { execFile } = await import('child_process')
+  const { promisify } = await import('util')
+  const { randomUUID } = await import('crypto')
+  const fs = await import('fs')
+  const os = await import('os')
+  const path = await import('path')
+  const execFileAsync = promisify(execFile)
+
+  const tmpDir = os.tmpdir()
+  const id = randomUUID()
+  const inputPath = path.join(tmpDir, `${id}.webm`)
+  const outputPath = path.join(tmpDir, `${id}.mp4`)
+
+  try {
+    await fs.promises.writeFile(inputPath, req.body)
+    await execFileAsync('ffmpeg', [
+      '-i', inputPath,
+      '-c:v', 'copy',
+      '-c:a', 'aac',
+      '-movflags', '+faststart',
+      '-y',
+      outputPath,
+    ])
+    const mp4 = await fs.promises.readFile(outputPath)
+    res.setHeader('Content-Type', 'video/mp4')
+    res.setHeader('Content-Disposition', 'attachment; filename="segmentiq.mp4"')
+    res.send(mp4)
+  } catch (err) {
+    console.error('[convert] ffmpeg error:', err)
+    res.status(500).json({ error: 'Conversion failed', code: 'INTERNAL_ERROR' })
+  } finally {
+    await fs.promises.unlink(inputPath).catch(() => {})
+    await fs.promises.unlink(outputPath).catch(() => {})
+  }
+})
+
+// ─── GET /api/coverage ───────────────────────────────────────────────────────
+// Returns cached tile data. If >24hrs old, triggers background recompute
+// and returns the stale data immediately.
+
+app.get('/api/coverage', requireSession, async (req: any, res: Response) => {
+  try {
+    const result = await db.query(
+      'SELECT tiles, activity_count, computed_at FROM coverage_cache WHERE athlete_id = $1',
+      [req.athleteId]
+    )
+
+    if (result.rows.length === 0) {
+      // No data yet — return empty with status
+      return res.json({
+        tiles: [],
+        activityCount: 0,
+        computedAt: null,
+        status: 'empty',
+        inProgress: coverageInProgress.has(req.athleteId),
+      })
+    }
+
+    const row = result.rows[0]
+    const ageMs = Date.now() - new Date(row.computed_at).getTime()
+    const stale = ageMs > 24 * 60 * 60 * 1000
+
+    return res.json({
+      tiles: row.tiles,
+      activityCount: row.activity_count,
+      computedAt: row.computed_at,
+      status: stale ? 'stale' : 'fresh',
+      inProgress: coverageInProgress.has(req.athleteId),
+    })
+  } catch (err) {
+    return handleError(err, res)
+  }
+})
+
+// ─── POST /api/coverage/refresh ──────────────────────────────────────────────
+// Triggers a fresh coverage compute. Returns immediately with {started: true}.
+// The compute runs in the background and updates the DB when done.
+// Client should poll GET /api/coverage to see when it's ready.
+
+app.post('/api/coverage/refresh', requireSession, async (req: any, res: Response) => {
+  if (coverageInProgress.has(req.athleteId)) {
+    return res.json({ started: false, reason: 'already_running' })
+  }
+
+  coverageInProgress.add(req.athleteId)
+  res.json({ started: true })
+
+  // Run in background — don't await
+  ;(async () => {
+    try {
+      const tiles = await computeCoverage(req.athleteId)
+      await db.query(`
+        INSERT INTO coverage_cache (athlete_id, tiles, activity_count, computed_at)
+        VALUES ($1, $2, $3, NOW())
+        ON CONFLICT (athlete_id) DO UPDATE SET
+          tiles = EXCLUDED.tiles,
+          activity_count = EXCLUDED.activity_count,
+          computed_at = NOW()
+      `, [req.athleteId, JSON.stringify(tiles), tiles.length])
+      console.log(`[coverage] saved ${tiles.length} tiles for athlete ${req.athleteId}`)
+    } catch (err) {
+      console.error('[coverage] compute failed:', err)
+    } finally {
+      coverageInProgress.delete(req.athleteId)
+    }
+  })()
+})
+
+// ─── GET /api/segments/starred ────────────────────────────────────────────────
 
 app.get('/api/segments/starred', requireSession, async (req: any, res: Response) => {
   try {
@@ -175,6 +388,8 @@ app.get('/api/segments/starred', requireSession, async (req: any, res: Response)
     return handleError(err, res)
   }
 })
+
+// ─── GET /api/segments/:segmentId/efforts ─────────────────────────────────────
 
 app.get('/api/segments/:segmentId/efforts', requireSession, async (req: any, res: Response) => {
   try {
@@ -217,6 +432,8 @@ app.get('/api/efforts/compare', requireSession, async (req: any, res: Response) 
   }
 })
 
+// ─── GET /api/efforts/:effortId ───────────────────────────────────────────────
+
 app.get('/api/efforts/:effortId', requireSession, async (req: any, res: Response) => {
   const safeKey = req.params.effortId
   const realEffortId = await toRealId(safeKey)
@@ -246,6 +463,8 @@ app.get('/api/efforts/:effortId', requireSession, async (req: any, res: Response
   }
 })
 
+// ─── GET /api/activities ──────────────────────────────────────────────────────
+
 app.get('/api/activities', requireSession, async (req: any, res: Response) => {
   try {
     const page = parseInt((req.query.page as string) ?? '1', 10)
@@ -273,6 +492,8 @@ app.get('/api/activities', requireSession, async (req: any, res: Response) => {
   }
 })
 
+// ─── GET /api/activities/:activityId ─────────────────────────────────────────
+
 app.get('/api/activities/:activityId', requireSession, async (req: any, res: Response) => {
   const activityId = req.params.activityId
   const cacheKey = `${req.athleteId}:${activityId}`
@@ -294,6 +515,9 @@ app.get('/api/activities/:activityId', requireSession, async (req: any, res: Res
     return handleError(err, res)
   }
 })
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
 async function getOrFetch(
   athleteId: number,
   realEffortId: string,
@@ -350,6 +574,8 @@ function handleError(err: unknown, res: Response) {
     code: 'INTERNAL_ERROR',
   })
 }
+
+// ─── Start ────────────────────────────────────────────────────────────────────
 
 setupDatabase()
   .then(() => {
